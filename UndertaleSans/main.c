@@ -356,6 +356,7 @@ int  game_heart_moving(void) {
 void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
     gSoul.hp -= dmg;
+    game_play_sound("PlayerDamaged");
     gKR += karma; if (gKR > 40) gKR = 40;
     if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
     gSoul.invuln = 0.4f;
@@ -368,7 +369,22 @@ void game_teleport_heart(double x, double y) {
 void game_end_attack(void) { gAttackEnded = 1; }
 void game_set_max_fall(double v) { gMaxFall = v; }
 double game_get_max_fall(void) { return gMaxFall; }
-void game_play_sound(const char* name) { (void)name; /* TODO: 공격 효과음 wav 매핑(다음 푸시) */ }
+/* 효과음: 이미 연 MCI alias는 재사용(빠른 재생). BGM(PlaySound)·음성(spk)과 별도 채널이라 동시재생. */
+static char gSfxOpen[16][40]; static int gSfxN = 0;
+void game_play_sound(const char* name) {
+    char alias[40], rel[64], cmd[400], play[64]; int i, found = 0;
+    if (!name || !name[0]) return;
+    wsprintfA(alias, "sfx_%s", name);
+    for (i = 0; i < gSfxN; i++) if (strcmp(gSfxOpen[i], alias) == 0) { found = 1; break; }
+    if (!found) {
+        wsprintfA(rel, "sfx_%s.wav", name);
+        wsprintfA(cmd, "open \"%s\" type waveaudio alias %s", assetPath(rel), alias);
+        if (mciSendStringA(cmd, NULL, 0, NULL) != 0) return;   /* 파일 없음/실패 → 무음 */
+        if (gSfxN < 16) { strncpy(gSfxOpen[gSfxN], alias, 39); gSfxOpen[gSfxN][39] = 0; gSfxN++; }
+    }
+    wsprintfA(play, "play %s from 0", alias);
+    mciSendStringA(play, NULL, 0, NULL);
+}
 void game_shake(double intensity) { if ((float)intensity > gShakeI) gShakeI = (float)intensity; }
 void game_set_blackscreen(int on) { gBlackScreen = on; }
 /* 알려진 샌즈 대사 한국어 매핑(없으면 영어 그대로 와이드 변환) */
