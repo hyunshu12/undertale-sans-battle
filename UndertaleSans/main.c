@@ -21,6 +21,11 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "winmm.lib")
 
+/* 진입점/서브시스템을 코드에서 직접 못박음(프로젝트 설정에 의존하지 않음).
+   진입점은 main()이지만 GUI 창 앱이라 콘솔 창은 뜨지 않음(/SUBSYSTEM:WINDOWS).
+   /ENTRY:mainCRTStartup → CRT가 main()을 호출 → "main 못 찾음" 링크에러 방지. */
+#pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+
 /* ---------------- 상수 ---------------- */
 #define CLIENT_W   640
 #define CLIENT_H   480
@@ -277,8 +282,13 @@ static void freeResources(void) {
     DeleteObject(gFontBig); DeleteObject(gFontSmall);
 }
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR cmd, int show) {
-    (void)hPrev; (void)cmd;
+int main(void) {
+    HINSTANCE hInst = GetModuleHandleA(NULL);   /* WinMain의 hInstance 대용 */
+    int show = SW_SHOW;
+
+    /* 콘솔 서브시스템으로 빌드되는 환경 대비: 혹시 콘솔 창이 생기면 숨김 */
+    { HWND con = GetConsoleWindow(); if (con) ShowWindow(con, SW_HIDE); }
+
     srand((unsigned)time(NULL));   /* 시드 1회 */
 
     WNDCLASSEXA wc;
