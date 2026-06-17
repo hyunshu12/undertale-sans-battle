@@ -62,7 +62,7 @@
 /* 메뉴 버튼 배치 */
 #define BTN_W 110
 #define BTN_H 42
-#define BTN_Y 402
+#define BTN_Y 428
 #define BTN_STEP 124
 #define BTN_X0 79
 
@@ -235,6 +235,20 @@ static void playBGM(void) {
 }
 static void stopBGM(void) { PlaySoundA(NULL, NULL, 0); }
 
+/* 샌즈 음성("으으으"). BGM(PlaySound)과 동시재생을 위해 MCI 별도 채널 사용. */
+static int   gVoiceOpen = 0;
+static float gVoiceTimer = 0.0f;
+static void openVoice(void) {
+    char cmd[320];
+    if (gVoiceOpen) return;
+    wsprintfA(cmd, "open \"%s\" type waveaudio alias spk", assetPath("sans_speak.wav"));
+    if (mciSendStringA(cmd, NULL, 0, NULL) == 0) gVoiceOpen = 1;
+}
+static void playVoice(void) {
+    if (!gVoiceOpen) openVoice();
+    if (gVoiceOpen) mciSendStringA("play spk from 0", NULL, 0, NULL);
+}
+
 /* ---------------- 게임 로직 ---------------- */
 static void clearHazards(void) {
     int i;
@@ -264,7 +278,12 @@ static void startEnemyPhase(void) {
     gEnemyTime = ENEMY_DURATION;
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
-    gUseVM = RunAttack("sans_bonegap1");   /* VM 공격 시도 (실패 시 Slice2 패턴 폴백) */
+    {   /* 턴마다 다른 공격(뼈 기반 패턴 순환). 전체 흐름은 Slice4-5에서 페이즈 디스패처로 */
+        static const char* atks[] = {
+            "sans_bonegap1", "sans_boneslideh", "sans_bluebone", "sans_bonegap2", "sans_boneslidev"
+        };
+        gUseVM = RunAttack(atks[gTurn % 5]);   /* 실패 시 Slice2 패턴 폴백 */
+    }
 }
 static void advanceTurn(void) {
     gTurn++;
@@ -471,6 +490,7 @@ static void update(float dt) {
             const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
             int len = (int)wcslen(line);
             gTypePos += dt * 28.0f;                 /* 타이핑 속도 */
+            if ((int)gTypePos < len) { gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; } }
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;  /* 1회 누르면 즉시 완성 */
                 else startEnemyPhase();                     /* 완성 후 누르면 적턴 */
@@ -482,6 +502,7 @@ static void update(float dt) {
         } else { /* PH_ACTION */
             int len = (int)wcslen(gMessage);
             gTypePos += dt * 32.0f;
+            if ((int)gTypePos < len) { gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; } }
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;
                 else advanceTurn();
@@ -523,7 +544,7 @@ static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
     }
 }
 static void drawHpBar(void) {
-    int hpx = 250, hpy = 350, hpw = 120, hph = 20;
+    int hpx = 250, hpy = 398, hpw = 120, hph = 20;
     int cur = (int)(hpw * (gSoul.hp / (float)gSoul.maxHp));
     wchar_t buf[48];
     drawText(gMemDC, 120, hpy - 1, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
