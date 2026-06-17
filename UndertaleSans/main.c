@@ -94,6 +94,7 @@ static Bone      gBones[MAX_BONES];        /* [구현조건: 배열] */
 static Blaster   gBlasters[MAX_BLASTERS];  /* [구현조건: 배열] */
 static int       gTurn = 0;
 static int       gMenuIndex = 0;
+static int       gItemsLeft = 3;
 static float     gSpawnTimer = 0.0f;
 static float     gBlasterTimer = 0.0f;
 static float     gEnemyTime = 0.0f;
@@ -122,7 +123,10 @@ static void startEnemyPhase(void);
 static void advanceTurn(void);
 
 /* ---------------- 유틸 ([구현조건: 사용자정의함수]) ---------------- */
-static int   keyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }              /* [구현조건: 키보드입력] */
+static int   keyDown(int vk) {                                                             /* [구현조건: 키보드입력] */
+    if (GetForegroundWindow() != gHwnd) return 0;   /* 창 비활성(Alt+Tab) 시 전역 입력 무시 */
+    return (GetAsyncKeyState(vk) & 0x8000) != 0;
+}
 static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (float)RAND_MAX); } /* [구현조건: 랜덤함수] */
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
@@ -137,6 +141,15 @@ static void drawText(HDC dc, int x, int y, const char* s, COLORREF col, HFONT f)
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, col);
     TextOutA(dc, x, y, s, (int)strlen(s));
     SelectObject(dc, old);
+}
+/* 사각형 영역 안에서 자동 줄바꿈(긴 대사/메시지가 박스 밖으로 새지 않게) */
+static void drawTextWrapped(int x, int y, int w, int h, const char* s, COLORREF col, HFONT f) {
+    RECT r; HFONT old;
+    r.left = x; r.top = y; r.right = x + w; r.bottom = y + h;
+    old = (HFONT)SelectObject(gMemDC, f);
+    SetBkMode(gMemDC, TRANSPARENT); SetTextColor(gMemDC, col);
+    DrawTextA(gMemDC, s, -1, &r, DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(gMemDC, old);
 }
 
 /* 에셋 경로: exe폴더\assets, exe폴더\..\..\assets(VS x64\Debug 기준), cwd\assets 순으로 탐색 */
@@ -188,8 +201,11 @@ static void freeSprite(Sprite* s) {
 
 /* ---------------- 오디오 ([구현조건: 음악재생]) ---------------- */
 static void playBGM(void) {
-    PlaySoundA(assetPath("megalovania.wav"), NULL,
-               SND_FILENAME | SND_ASYNC | SND_LOOP);   /* 없으면 조용히 무음 */
+    const char* p = assetPath("megalovania.wav");
+    FILE* f = fopen(p, "rb");
+    if (!f) return;                 /* 파일 없으면 재생 시도 안 함(시스템 경고음 방지) */
+    fclose(f);
+    PlaySoundA(p, NULL, SND_FILENAME | SND_ASYNC | SND_LOOP | SND_NODEFAULT);
 }
 static void stopBGM(void) { PlaySoundA(NULL, NULL, 0); }
 
@@ -205,7 +221,7 @@ static void centerSoul(void) {
 }
 static void startBattle(void) {
     gSoul.maxHp = MAX_HP; gSoul.hp = MAX_HP; gSoul.invuln = 0.0f;
-    gTurn = 0; gMenuIndex = 0;
+    gTurn = 0; gMenuIndex = 0; gItemsLeft = 3;
     clearHazards(); centerSoul();
     gState = ST_BATTLE;
     playBGM();
@@ -329,18 +345,23 @@ static void updateEnemyPhase(float dt) {
 static void doAction(int idx) {
     switch (idx) {
     case 0: /* FIGHT */
-        lstrcpyA(gMessage, "* You attack! ... sans dodges. MISS!");
+        lstrcpyA(gMessage, "* You attack! ...but sans dodges. MISS!");
         break;
     case 1: /* ACT */
-        lstrcpyA(gMessage, "* Check. SANS  ATK 1  DEF 1. knows a shortcut.");
+        lstrcpyA(gMessage, "* Check.  SANS - ATK 1 DEF 1.\n* the easiest enemy. can only deal 1 damage.");
         break;
     case 2: /* ITEM */
-        gSoul.hp += 30; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
-        lstrcpyA(gMessage, "* You eat a Monster Candy.  (+30 HP)");
+        if (gItemsLeft > 0) {
+            gItemsLeft--;
+            gSoul.hp += 20; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
+            wsprintfA(gMessage, "* You eat a Monster Candy. (+20 HP)\n* (%d left)", gItemsLeft);
+        } else {
+            lstrcpyA(gMessage, "* You're out of items.");
+        }
         break;
     default: /* MERCY */
         if (gTurn + 1 >= MERCY_TURNS) { gState = ST_WIN; stopBGM(); return; }
-        lstrcpyA(gMessage, "* Sans   ...is not ready to give up yet.");
+        lstrcpyA(gMessage, "* Sans isn't ready to give up yet.");
         break;
     }
     gPhase = PH_ACTION;
@@ -480,7 +501,7 @@ static void render(void) {
         char buf[160];
         if (n > len) n = len;
         memcpy(buf, line, n); buf[n] = '\0';
-        drawText(gMemDC, BOX_X + 12, BOX_Y + 16, buf, RGB(255, 255, 255), gFontSmall);
+        drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, "[Z]", RGB(255, 255, 0), gFontTiny);
     } else if (gPhase == PH_ENEMY) {
         if (gTurn % 2 == 0) {
@@ -508,7 +529,7 @@ static void render(void) {
         char buf[160];
         if (n > len) n = len;
         memcpy(buf, gMessage, n); buf[n] = '\0';
-        drawText(gMemDC, BOX_X + 12, BOX_Y + 16, buf, RGB(255, 255, 255), gFontSmall);
+        drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, "[Z]", RGB(255, 255, 0), gFontTiny);
     } else { /* PH_MENU */
         drawText(gMemDC, BOX_X + 12, BOX_Y + 16, "* SANS is sparing you.", RGB(255, 255, 255), gFontSmall);
@@ -592,6 +613,16 @@ int main(void) {
     MSG msg;
 
     { HWND con = GetConsoleWindow(); if (con) ShowWindow(con, SW_HIDE); }
+
+    /* 고DPI 모니터에서 OS 비트맵 스케일링(화면 흐림) 방지 — 창 생성 전에 호출 */
+    {
+        HMODULE u32 = GetModuleHandleA("user32");
+        typedef BOOL (WINAPI *PSetCtx)(void*);
+        PSetCtx setCtx = u32 ? (PSetCtx)GetProcAddress(u32, "SetProcessDpiAwarenessContext") : NULL;
+        if (!setCtx || !setCtx((void*)(LONG_PTR)-4))   /* DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 */
+            SetProcessDPIAware();                       /* 구버전 Windows 폴백 */
+    }
+
     srand((unsigned)time(NULL));
 
     ZeroMemory(&wc, sizeof(wc));
@@ -611,6 +642,19 @@ int main(void) {
                             rc.right - rc.left, rc.bottom - rc.top, NULL, NULL, hInst, NULL);
     if (!gHwnd) return 0;
 
+    /* 작업영역(작업표시줄 제외) 중앙에 창 배치 */
+    {
+        RECT wa, wr; int ww, wh, px, py;
+        SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
+        GetWindowRect(gHwnd, &wr);
+        ww = wr.right - wr.left; wh = wr.bottom - wr.top;
+        px = wa.left + ((wa.right - wa.left) - ww) / 2;
+        py = wa.top  + ((wa.bottom - wa.top) - wh) / 2;
+        if (px < wa.left) px = wa.left;
+        if (py < wa.top)  py = wa.top;
+        SetWindowPos(gHwnd, NULL, px, py, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+    }
+
     initResources();
     ShowWindow(gHwnd, show);
     UpdateWindow(gHwnd);
@@ -629,17 +673,20 @@ int main(void) {
 
         QueryPerformanceCounter(&now);
         {
+            int didUpdate = 0;
             double frame = (double)(now.QuadPart - prev.QuadPart) / (double)freq.QuadPart;
             prev = now;
             if (frame > 0.25) frame = 0.25;
             acc += frame;
-            while (acc >= FIXED_DT) { update((float)FIXED_DT); acc -= FIXED_DT; }
-        }
-        render();
-        {
-            HDC dc = GetDC(gHwnd);
-            BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
-            ReleaseDC(gHwnd, dc);
+            while (acc >= FIXED_DT) { update((float)FIXED_DT); acc -= FIXED_DT; didUpdate = 1; }
+            if (didUpdate) {            /* 갱신된 프레임만 그려 ~60fps로 캡(CPU 점유 절감) */
+                render();
+                {
+                    HDC dc = GetDC(gHwnd);
+                    BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
+                    ReleaseDC(gHwnd, dc);
+                }
+            }
         }
         Sleep(1);
     }
