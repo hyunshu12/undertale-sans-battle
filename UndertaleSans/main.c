@@ -27,7 +27,12 @@
 #include <stdio.h>    /* fopen (에셋 경로 확인) */
 #include <wchar.h>    /* wcslen, wmemcpy (한글 유니코드 출력) */
 #include <time.h>
+#include <math.h>     /* cos (샌즈 회피 애니) */
 #include "game.h"     /* BTS VM/탄막 통합 (Box gBox, VM, hazards API) */
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
@@ -51,7 +56,8 @@
 #define MAX_BLASTERS 6
 #define HIT_DAMAGE 6
 #define MAX_HP     92
-#define MERCY_TURNS 4          /* 이 횟수 생존 후 MERCY로 승리 */
+#define MERCY_TURNS 4          /* (구) 폴백 패턴용 */
+#define MERCY_HA 8             /* 이 횟수 이상 공격 후(샌즈가 지침) MERCY로 승리 가능 */
 #define ENEMY_DURATION 8.0f    /* 적턴 길이(초) */
 
 #define SANS_W 128
@@ -68,7 +74,7 @@
 
 /* ---------------- 구조체 ([구현조건: 구조체]) ---------------- */
 typedef enum { ST_TITLE, ST_BATTLE, ST_GAMEOVER, ST_WIN } GameState;
-typedef enum { PH_DIALOGUE, PH_ENEMY, PH_MENU, PH_ACTION } Phase;
+typedef enum { PH_DIALOGUE, PH_ENEMY, PH_MENU, PH_ACTION, PH_FIGHT } Phase;
 
 typedef struct { float x, y; int maxHp, hp; float invuln; } Soul;
 typedef struct { float x, y, vx; int w, h; int active; } Bone;
@@ -85,7 +91,7 @@ typedef struct { HBITMAP bmp; HDC dc; HBITMAP oldbmp; int w, h, ok; } Sprite;
 static HWND     gHwnd;
 static HDC      gMemDC;
 static HBITMAP  gMemBmp, gOldBmp;
-static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan;
+static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan, gKarmaBr;
 static HFONT    gFontBig, gFontSmall, gFontTiny;
 static int      gPixelFontOk = 0;   /* 네오둥근모 픽셀 폰트 로드 성공 여부 */
 static int      gRunning = 1;
@@ -131,6 +137,14 @@ static int    gPrevUp = 0;              /* 점프키 엣지 검출 */
 static int    gKR = 0;                  /* KARMA(누적 카르마 데미지) */
 static float  gKR_t = 0.0f;
 
+/* --- 전투 흐름(HitAttempts) / 샌즈 회피 / 대사 큐 --- */
+static int    gHitAttempts = 0;          /* FIGHT(샌즈 회피) 성공 횟수 → 공격 선택 */
+static char   gCurAtk[32] = "";          /* 진행중 공격 이름(엔딩 트리거 판정) */
+static float  gSansDodgeT = 0.0f;        /* 회피 애니 타이머 */
+static float  gSansOffsetX = 0.0f;       /* 샌즈 머리 가로 오프셋(회피) */
+static const wchar_t* gDlgQueue[10];     /* 인트로/엔딩 공용 대사 큐 */
+static int    gDlgN = 0, gDlgIdx = 0, gDlgAfter = 0;  /* after: 0=적턴, 1=승리 */
+
 /* 키 엣지 검출용 이전 상태 */
 static int gPrevZ = 0, gPrevLeft = 0, gPrevRight = 0;
 
@@ -145,12 +159,29 @@ static const wchar_t* gDialogues[] = {
 };
 #define DIALOGUE_COUNT 6
 
+/* 공격 테이블 (BTS HitAttempts 순서). 모든 CSV는 assets/attacks/ 에 존재. */
+static const char* gIntroTable[] = {
+    "sans_intro", "sans_bonegap1", "sans_bluebone", "sans_bonegap2",
+    "sans_platforms1", "sans_platforms2", "sans_platforms3", "sans_platforms4",
+    "sans_platformblaster", "sans_platforms4hard", "sans_bonegap1fast",
+    "sans_boneslideh", "sans_platformblasterfast"
+};
+#define INTRO_N 13   /* HA 0..12 */
+static const char* gMultiTable[] = {
+    "sans_multi1", "sans_randomblaster1", "sans_multi2", "sans_bonestab1",
+    "sans_bonestab2", "sans_randomblaster2", "sans_boneslidev", "sans_multi3"
+};
+#define MULTI_N 8     /* HA 14..21 */
+
 /* ---------------- 전방 선언 ---------------- */
 static void startBattle(void);
 static void startTurn(void);
 static void startEnemyPhase(void);
 static void advanceTurn(void);
 static int  RunAttack(const char* name);
+static void startDialogue(const wchar_t** lines, int n, int after);
+static void startEnding(int viaFinal);
+static const char* chooseAttack(void);
 
 /* ---------------- 유틸 ([구현조건: 사용자정의함수]) ---------------- */
 static int   keyDown(int vk) {                                                             /* [구현조건: 키보드입력] */
@@ -271,14 +302,54 @@ static void centerSoul(void) {
     gSoul.x = BOX_X + BOX_W / 2.0f - SOUL_SIZE / 2.0f;
     gSoul.y = BOX_Y + BOX_H / 2.0f - SOUL_SIZE / 2.0f;
 }
+
+/* 대사 큐 시작(인트로/엔딩 공용). after: 0=대사 끝나면 적턴, 1=승리 */
+static void startDialogue(const wchar_t** lines, int n, int after) {
+    int i;
+    if (n > 10) n = 10;
+    for (i = 0; i < n; i++) gDlgQueue[i] = lines[i];
+    gDlgN = n; gDlgIdx = 0; gDlgAfter = after;
+    gPhase = PH_DIALOGUE; gTypePos = 0.0f;
+}
+/* HitAttempts 로 다음 공격 선택: <13=INTRO, ==13=SPARE, 14~21=MULTI, >=22=FINAL */
+static const char* chooseAttack(void) {
+    int ha = gHitAttempts;
+    if (ha < INTRO_N) return gIntroTable[ha];
+    if (ha == 13)     return "sans_spare";
+    if (ha < 22)      { int i = ha - 14; return (i < MULTI_N) ? gMultiTable[i] : gMultiTable[rand() % MULTI_N]; }
+    return "sans_final";
+}
+/* 엔딩 시퀀스: 탄막 정리 후 마무리 대사 → 승리 */
+static void startEnding(int viaFinal) {
+    static const wchar_t* fin[] = {
+        L"* ...",
+        L"* 헉... 헉...",
+        L"* 너 정말... 끈질긴 녀석이구나.",
+        L"* 좋아. 그래... 네가 이긴 걸로 하지.",
+        L"* 난 그릴비네 가게나 가야겠다. 잘 있어라."
+    };
+    static const wchar_t* spare[] = {
+        L"* ...",
+        L"* 정말로 날 봐주겠다는 거야?",
+        L"* ...훗. 별난 녀석이네.",
+        L"* 좋아. 오늘은 이쯤에서 끝내자.",
+        L"* 그릴비네 가게나 가야겠다. 잘 있어라."
+    };
+    clearHazards(); haz_reset();
+    gSoulMode = 0; gBlackScreen = 0; gBubbleLen = 0; gSansOffsetX = 0.0f;
+    gKR = 0; gKR_t = 0.0f;   /* 승리 확정 — 잔여 KARMA로 엔딩 중 사망하지 않게 */
+    startDialogue(viaFinal ? fin : spare, 5, 1);
+}
+
 static void startBattle(void) {
     gSoul.maxHp = MAX_HP; gSoul.hp = MAX_HP; gSoul.invuln = 0.0f;
-    gKR = 0; gKR_t = 0.0f; gAtkIndex = 0;
+    gKR = 0; gKR_t = 0.0f; gAtkIndex = 0; gHitAttempts = 0;
     gTurn = 0; gMenuIndex = 0; gItemsLeft = 3;
+    gCurAtk[0] = 0; gSansOffsetX = 0.0f; gBubbleLen = 0; gBlackScreen = 0;
     clearHazards(); centerSoul();
     gState = ST_BATTLE;
     playBGM();
-    startTurn();
+    startDialogue(gDialogues, DIALOGUE_COUNT, 0);   /* 인트로 독백 → 첫 공격 */
 }
 static void startTurn(void) {
     gPhase = PH_DIALOGUE;
@@ -292,15 +363,18 @@ static void startEnemyPhase(void) {
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
     gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0;             /* 영혼 물리 리셋 */
-    {   /* 턴마다 다른 공격(뼈 기반 패턴 순환). 전체 흐름은 Slice4-5에서 페이즈 디스패처로 */
-        static const char* seq[] = {
-            "sans_intro", "sans_bonegap1", "sans_bluebone", "sans_bonegap2",
-            "sans_boneslideh", "sans_boneslidev", "sans_platforms1",
-            "sans_platformblaster", "sans_randomblaster1", "sans_multi1"
-        };
-        gUseVM = RunAttack(seq[gAtkIndex % 10]);   /* 실패 시 Slice2 패턴 폴백 */
-        gAtkIndex++;
+    {   /* HitAttempts 기반 공격 선택(INTRO/SPARE/MULTI/FINAL) */
+        const char* atk = chooseAttack();
+        strncpy(gCurAtk, atk, 31); gCurAtk[31] = 0;
+        gUseVM = RunAttack(atk);   /* 실패(파일 없음) 시 Slice2 패턴 폴백 */
     }
+    if (gUseVM) gEnemyTime = 90.0f;   /* VM 안전장치: 보통 EndAttack로 먼저 끝남(멈춤 방지) */
+}
+/* 적턴 종료 전환(VM·폴백 공용). 최종 공격이면 엔딩, 아니면 메뉴. */
+static void endEnemyPhase(void) {
+    clearHazards(); haz_reset();
+    if (strcmp(gCurAtk, "sans_final") == 0) startEnding(1);
+    else { gPhase = PH_MENU; gMenuIndex = 0; }
 }
 static void advanceTurn(void) {
     gTurn++;
@@ -468,6 +542,14 @@ static void updateEnemyPhase(float dt) {
                 gSoul.y + SOUL_SIZE <= ptopY + 10) { gSoul.y = (float)(ptopY - SOUL_SIZE); gVy = 0.0f; }
             if (gSoul.y >= floorY) { gSoul.y = floorY; gVy = 0.0f; }
             if (gSoul.y < gBox.y + 2) { gSoul.y = (float)(gBox.y + 2); if (gVy < 0.0f) gVy = 0.0f; }
+            if (gVy == 0.0f) {   /* 이동 플랫폼 위에 서면 함께 끌려감(착지 물리) */
+                double pvx = haz_platform_vx(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE);
+                if (pvx != 0.0) {
+                    gSoul.x += (float)(pvx * dt);
+                    if (gSoul.x < gBox.x + 2) gSoul.x = (float)(gBox.x + 2);
+                    if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
+                }
+            }
         } else {
             /* === 빨간 영혼: 자유 8방향 === */
             gSoul.x += dx * speed * dt;
@@ -480,9 +562,9 @@ static void updateEnemyPhase(float dt) {
         vm_step(&gVM, dt);
         haz_update(dt);
         if (gState != ST_BATTLE) return;            /* 피격으로 게임오버됐을 수 있음 */
-        if (gAttackEnded || (gVM.finished && !vm_is_running(&gVM))) {
-            haz_reset(); gPhase = PH_MENU; gMenuIndex = 0;
-        }
+        gEnemyTime -= dt;                            /* 안전장치 카운트다운 */
+        if (gAttackEnded || (gVM.finished && !vm_is_running(&gVM)) || gEnemyTime <= 0.0f)
+            endEnemyPhase();                        /* 최종이면 엔딩, 아니면 메뉴 */
         return;
     }
 
@@ -523,21 +605,18 @@ static void updateEnemyPhase(float dt) {
         }
     }
     gEnemyTime -= dt;
-    if (gEnemyTime <= 0.0f && gState == ST_BATTLE) {
-        clearHazards();
-        gPhase = PH_MENU;
-        gMenuIndex = 0;
-    }
+    if (gEnemyTime <= 0.0f && gState == ST_BATTLE) endEnemyPhase();
 }
 
 /* 메뉴 액션 수행 */
 static void doAction(int idx) {
     switch (idx) {
-    case 0: /* FIGHT */
-        lstrcpyW(gMessage, L"* 공격! ...하지만 샌즈가 피했다. 빗나감!");
-        break;
+    case 0: /* FIGHT → 샌즈 회피 애니(끝나면 HitAttempts++ → 다음 공격) */
+        gPhase = PH_FIGHT; gSansDodgeT = 0.0f; gSansOffsetX = 0.0f;
+        game_play_sound("Slam");   /* 헛스윙(있으면) */
+        return;
     case 1: /* ACT */
-        lstrcpyW(gMessage, L"* 관찰.  샌즈 - 공격 1 방어 1.\n* 가장 약한 적. 1의 피해만 줄 수 있다.");
+        lstrcpyW(gMessage, L"* 관찰.  샌즈 - 공격 1 방어 1.\n* 끈질기게 버티는 수밖에 없다.");
         break;
     case 2: /* ITEM */
         if (gItemsLeft > 0) {
@@ -549,7 +628,7 @@ static void doAction(int idx) {
         }
         break;
     default: /* MERCY */
-        if (gTurn + 1 >= MERCY_TURNS) { gState = ST_WIN; stopBGM(); return; }
+        if (gHitAttempts >= MERCY_HA) { startEnding(0); return; }   /* 샌즈가 지침 → 자비 승리 */
         lstrcpyW(gMessage, L"* 샌즈는 아직 포기할 생각이 없어 보인다.");
         break;
     }
@@ -606,25 +685,40 @@ static void update(float dt) {
             }
         }
         if (gPhase == PH_DIALOGUE) {
-            const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
+            const wchar_t* line = gDlgQueue[gDlgIdx];
             int len = (int)wcslen(line);
             gTypePos += dt * 28.0f;                 /* 타이핑 속도 */
             if ((int)gTypePos < len) { gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; } }
             if (zPressed) {
-                if (gTypePos < len) gTypePos = (float)len;  /* 1회 누르면 즉시 완성 */
-                else startEnemyPhase();                     /* 완성 후 누르면 적턴 */
+                if (gTypePos < len) { gTypePos = (float)len; }   /* 1회 누르면 즉시 완성 */
+                else {                                            /* 다음 대사 / 큐 끝 처리 */
+                    gDlgIdx++;
+                    if (gDlgIdx >= gDlgN) {
+                        if (gDlgAfter == 1) { gState = ST_WIN; stopBGM(); }
+                        else startEnemyPhase();
+                    } else { gTypePos = 0.0f; }
+                }
             }
         } else if (gPhase == PH_ENEMY) {
             updateEnemyPhase(dt);
         } else if (gPhase == PH_MENU) {
             updateMenuPhase(lPressed, rPressed, zPressed);
-        } else { /* PH_ACTION */
+        } else if (gPhase == PH_FIGHT) {
+            /* 샌즈 회피: 옆으로 휙 → 0.45s 후 제자리. 끝나면 HitAttempts++ → 다음 공격 */
+            gSansDodgeT += dt;
+            gSansOffsetX = -(float)cos((double)gSansDodgeT * 225.0 * M_PI / 180.0) * 100.0f;
+            if (gSansDodgeT > 0.45f) {
+                gSansOffsetX = 0.0f;
+                gHitAttempts++;
+                startEnemyPhase();
+            }
+        } else { /* PH_ACTION (ACT/ITEM/MERCY 결과) → 메뉴로 복귀 */
             int len = (int)wcslen(gMessage);
             gTypePos += dt * 32.0f;
             if ((int)gTypePos < len) { gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; } }
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;
-                else advanceTurn();
+                else { gPhase = PH_MENU; gMenuIndex = 0; }
             }
         }
         break;
@@ -637,15 +731,16 @@ static void update(float dt) {
 
 /* ---------------- 렌더 ---------------- */
 static void drawSansHead(void) {
-    /* 일정 주기로 파란 눈 연출 */
+    /* 일정 주기로 파란 눈 연출. gSansOffsetX 만큼 좌우(회피 애니) */
+    int sx = SANS_X + (int)gSansOffsetX;
     int menace = ((int)(gMenacePulse * 1.5f) % 4 == 0);
     Sprite* s = (menace && gSprHeadBlue.ok) ? &gSprHeadBlue : &gSprHead;
-    if (s->ok) { drawSprite(s, SANS_X, SANS_Y); return; }
+    if (s->ok) { drawSprite(s, sx, SANS_Y); return; }
     /* 폴백: GDI 해골 */
-    fillRect(gMemDC, SANS_X + 24, SANS_Y + 10, 80, 78, gWhite);
-    fillRect(gMemDC, SANS_X + 40, SANS_Y + 32, 14, 16, gBlack);
-    fillRect(gMemDC, SANS_X + 74, SANS_Y + 32, 14, 16, menace ? gCyan : gBlack);
-    fillRect(gMemDC, SANS_X + 40, SANS_Y + 60, 48, 6, gBlack);
+    fillRect(gMemDC, sx + 24, SANS_Y + 10, 80, 78, gWhite);
+    fillRect(gMemDC, sx + 40, SANS_Y + 32, 14, 16, gBlack);
+    fillRect(gMemDC, sx + 74, SANS_Y + 32, 14, 16, menace ? gCyan : gBlack);
+    fillRect(gMemDC, sx + 40, SANS_Y + 60, 48, 6, gBlack);
 }
 static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
     int x = BTN_X0 + idx * BTN_STEP;
@@ -670,11 +765,11 @@ static void drawHpBar(void) {
     fillRect(gMemDC, hpx, hpy, hpw, hph, gDkRed);
     fillRect(gMemDC, hpx, hpy, cur, hph, gYellow);
     if (gKR > 0) {   /* KARMA(보라) — 현재 HP의 오른쪽 끝 일부가 깎일 예정 */
-        static HBRUSH krBr = NULL; int krw;
-        if (!krBr) krBr = CreateSolidBrush(RGB(150, 30, 160));
+        int krw;
+        if (!gKarmaBr) gKarmaBr = CreateSolidBrush(RGB(150, 30, 160));
         krw = (int)(hpw * (gKR / (float)gSoul.maxHp));
         if (krw > cur) krw = cur;
-        fillRect(gMemDC, hpx + cur - krw, hpy, krw, hph, krBr);
+        fillRect(gMemDC, hpx + cur - krw, hpy, krw, hph, gKarmaBr);
     }
     wsprintfW(buf, L"HP %d / %d", gSoul.hp, gSoul.maxHp);
     drawText(gMemDC, hpx + hpw + 12, hpy - 1, buf, RGB(255, 255, 255), gFontSmall);
@@ -735,13 +830,16 @@ static void render(void) {
     }
 
     if (gPhase == PH_DIALOGUE) {
-        const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
+        const wchar_t* line = gDlgQueue[gDlgIdx];
         int n = (int)gTypePos; int len = (int)wcslen(line);
         wchar_t buf[160];
         if (n > len) n = len;
         wmemcpy(buf, line, n); buf[n] = L'\0';
         drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
+    } else if (gPhase == PH_FIGHT) {
+        drawText(gMemDC, BOX_X + 12, BOX_Y + 16, L"* 공격!", RGB(255, 255, 255), gFontSmall);
+        drawTextCentered(320 + (int)gSansOffsetX, SANS_Y + SANS_H + 4, L"빗나감!", RGB(255, 255, 0), gFontSmall);
     } else if (gPhase == PH_ENEMY) {
         if (gUseVM) {
             haz_render(gMemDC);   /* VM 탄막 렌더 */
@@ -774,7 +872,7 @@ static void render(void) {
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else { /* PH_MENU */
         drawText(gMemDC, BOX_X + 12, BOX_Y + 16, L"* 무엇을 할까...", RGB(255, 255, 255), gFontSmall);
-        if (gTurn + 1 >= MERCY_TURNS)
+        if (gHitAttempts >= MERCY_HA)
             drawText(gMemDC, BOX_X + 12, BOX_Y + 44, L"* (자비 가능!)", RGB(255, 255, 0), gFontTiny);
     }
 
@@ -865,7 +963,9 @@ static void freeResources(void) {
     if (gMemBmp) DeleteObject(gMemBmp);
     DeleteObject(gBlack); DeleteObject(gWhite); DeleteObject(gRed); DeleteObject(gYellow);
     DeleteObject(gBlue); DeleteObject(gDkRed); DeleteObject(gCyan);
+    if (gKarmaBr) DeleteObject(gKarmaBr);
     DeleteObject(gFontBig); DeleteObject(gFontSmall); DeleteObject(gFontTiny);
+    haz_free();   /* hazards.c 브러시 해제 */
     if (gPixelFontOk) RemoveFontResourceExA(assetPath("neodgm.ttf"), FR_PRIVATE, NULL);
 }
 
@@ -954,7 +1054,13 @@ int main(void) {
                 render();
                 {
                     HDC dc = GetDC(gHwnd);
-                    BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, gShakeDx, gShakeDy, SRCCOPY);
+                    if (gShakeDx || gShakeDy) {   /* 흔들림: 대상 오프셋 + 빈 가장자리 검정(소스 범위초과 방지) */
+                        RECT wr; wr.left = 0; wr.top = 0; wr.right = CLIENT_W; wr.bottom = CLIENT_H;
+                        FillRect(dc, &wr, gBlack);
+                        BitBlt(dc, gShakeDx, gShakeDy, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
+                    } else {
+                        BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
+                    }
                     ReleaseDC(gHwnd, dc);
                 }
             }
@@ -964,6 +1070,7 @@ int main(void) {
 
     timeEndPeriod(1);
     stopBGM();
+    mciSendStringA("close all", NULL, 0, NULL);   /* 음성/효과음 MCI 디바이스 정리 */
     freeResources();
     return 0;
 }

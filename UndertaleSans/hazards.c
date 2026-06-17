@@ -26,8 +26,8 @@ typedef struct {
     float waitTimer, blastTime, baseSize, beamTimer, leaveSpeed, opacity; int active;
 } HBlaster;  /* state: 0 ENTER,1 WAIT,2 FIRE,3 LEAVE */
 typedef struct {
-    int state; float x, y, w, h, ang; float dist, warn, stay, speed, timer; int active;
-} HStab;     /* state: 0 WARN,1 IN,2 HOLD,3 OUT */
+    int state; float x, y, w, h, ang; float dist, warn, stay, speed, timer, pen; int active;
+} HStab;     /* state: 0 WARN,1 IN,2 HOLD,3 OUT.  pen=누적 진입거리 */
 
 static HBone    bones[HAZ_MAX_BONES];
 static HPlat    plats[HAZ_MAX_PLATS];
@@ -51,6 +51,13 @@ static void ensure_brushes(void) {
     }
 }
 
+/* 종료 시 브러시 해제(GDI 객체 누수 방지). 게임 종료 1회 호출. */
+void haz_free(void) {
+    if (brWhite)  { DeleteObject(brWhite);  brWhite  = NULL; }
+    if (brBlue)   { DeleteObject(brBlue);   brBlue   = NULL; }
+    if (brOrange) { DeleteObject(brOrange); brOrange = NULL; }
+    if (brCyan)   { DeleteObject(brCyan);   brCyan   = NULL; }
+}
 void haz_set_vm(VM* vm) { g_vm = vm; }
 void haz_reset(void) {
     int i;
@@ -305,25 +312,25 @@ void haz_update(float dt) {
         }
     }
 
-    /* 찌르기(BoneStab) */
+    /* 찌르기(BoneStab): WARN(예고) → IN(dist만큼 진입) → HOLD(stay) → OUT(후퇴) */
     for (i = 0; i < HAZ_MAX_STABS; i++) {
         HStab* s = &stabs[i];
+        int dir;
         if (!s->active) continue;
-        s->timer -= dt;
+        dir = ((int)(s->ang / 90)) & 3;
         if (s->state == 0) {            /* WARN */
-            if (s->timer <= 0) { s->state = 1; }
-        } else if (s->state == 1) {     /* IN: 안쪽으로 진입 */
+            s->timer -= dt;
+            if (s->timer <= 0) { s->state = 1; s->pen = 0.0f; }
+        } else if (s->state == 1) {     /* IN: dist 까지만 진입(오버슈트 방지) */
             float mv = s->speed * dt;
-            int dir = ((int)(s->ang / 90)) & 3;
+            if (s->pen + mv > s->dist) mv = s->dist - s->pen;
             s->x -= (float)(DVX(dir * 90) * mv); s->y -= (float)(DVY(dir * 90) * mv);
-            /* 진입깊이만큼 들어오면 HOLD */
-            s->timer -= 0; /* IN은 거리 기반: dist/speed 시간 */
-            if (s->state == 1 && (s->warn <= 0)) {}
-            /* 단순화: warn 끝난 뒤 stay 시간 동안 IN/HOLD 유지 후 제거 */
-            s->stay -= dt;
-            if (s->stay <= 0) s->state = 3;
-        } else if (s->state == 3) {     /* OUT */
-            int dir = ((int)(s->ang / 90)) & 3;
+            s->pen += mv;
+            if (s->pen >= s->dist - 0.01f) { s->state = 2; s->timer = s->stay; }
+        } else if (s->state == 2) {     /* HOLD: 정지 유지 */
+            s->timer -= dt;
+            if (s->timer <= 0) s->state = 3;
+        } else {                        /* OUT: 다시 후퇴 → 화면 밖이면 제거 */
             float mv = s->speed * dt;
             s->x += (float)(DVX(dir * 90) * mv); s->y += (float)(DVY(dir * 90) * mv);
             if (s->x + s->w < -50 || s->x > 700 || s->y + s->h < -50 || s->y > 540) s->active = 0;
@@ -390,7 +397,7 @@ void haz_render(HDC dc) {
     }
 }
 
-/* 박스 경계∪플랫폼 위 솔리드 판정(BLUE 물리용; 현재는 박스 경계만) */
+/* 플랫폼 위 솔리드 판정(BLUE 물리 착지용). 위에서 내려올 때만 밟힘. */
 int haz_is_solid(double x, double y, double w, double h, double* outTopY) {
     int i;
     for (i = 0; i < HAZ_MAX_PLATS; i++) {
@@ -402,4 +409,17 @@ int haz_is_solid(double x, double y, double w, double h, double* outTopY) {
         }
     }
     return 0;
+}
+
+/* 발밑(footX..footX+w, footY) 에 닿은 플랫폼의 수평속도(px/s). 없으면 0.
+   이동 플랫폼이 그 위에 선 영혼을 함께 끌고 가도록(착지 물리 정밀화). */
+double haz_platform_vx(double footX, double footY, double w) {
+    int i;
+    for (i = 0; i < HAZ_MAX_PLATS; i++) {
+        if (!plats[i].active) continue;
+        if (footX < plats[i].x + plats[i].w && footX + w > plats[i].x &&
+            footY >= plats[i].y - 10 && footY <= plats[i].y + 9)
+            return DVX(plats[i].ang) * plats[i].speed;
+    }
+    return 0.0;
 }

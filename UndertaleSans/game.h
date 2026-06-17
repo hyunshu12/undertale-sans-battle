@@ -27,12 +27,14 @@ double game_get_max_fall(void);
 
 /* --- hazards.c API --- */
 void haz_reset(void);                          /* 탄막 초기화 */
+void haz_free(void);                            /* 종료 시 브러시 해제 */
 void haz_set_vm(VM* vm);                        /* CombatZoneResize의 TLResume 콜백용 */
 void haz_on_command(void* ctx, const char* cmd, char args[][VM_ARG_LEN], int argc);
 void haz_get_heart_pos(void* ctx, double* x, double* y);
 void haz_update(float dt);
 void haz_render(HDC dc);
 int  haz_active_count(void);                    /* 디버그 오버레이용(뼈+블래스터 등) */
-int  haz_is_solid(double x, double y, double w, double h, double* outTopY); /* 박스경계∪플랫폼 위 */
+int  haz_is_solid(double x, double y, double w, double h, double* outTopY); /* 플랫폼 위 솔리드 */
+double haz_platform_vx(double footX, double footY, double w);              /* 발밑 플랫폼 수평속도 */
 
 #endif
