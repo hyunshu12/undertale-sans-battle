@@ -1,3 +1,9 @@
+> ⚠️ **이 문서는 v1(적대적 검증 전)입니다.** 다축 적대적 검증(34개 확정 결함) 결과가 반영된
+> **최신 설계는 [`2026-06-17-undertale-sans-battle-design-v2.md`](./2026-06-17-undertale-sans-battle-design-v2.md)** 를 보세요.
+> v1은 의사결정 이력 보존용으로 남겨둡니다.
+
+---
+
 # UNDERTALE — Sans Battle (콘솔 C) 설계 문서
 
 - **작성일**: 2026-06-17
