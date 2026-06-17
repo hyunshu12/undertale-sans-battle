@@ -74,6 +74,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.c" />
+    <ClCompile Include="vm.c" />
+    <ClCompile Include="hazards.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="vm.h" />
+    <ClInclude Include="game.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

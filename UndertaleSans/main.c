@@ -27,6 +27,7 @@
 #include <stdio.h>    /* fopen (에셋 경로 확인) */
 #include <wchar.h>    /* wcslen, wmemcpy (한글 유니코드 출력) */
 #include <time.h>
+#include "game.h"     /* BTS VM/탄막 통합 (Box gBox, VM, hazards API) */
 
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "user32.lib")
@@ -107,6 +108,17 @@ static float     gTypePos = 0.0f;          /* 타이핑 진행 글자수 */
 static wchar_t   gMessage[160] = L"";      /* 액션 메시지 */
 static float     gMenacePulse = 0.0f;      /* 샌즈 파란 눈 토글 */
 
+/* --- BTS VM 통합 전역 --- */
+Box           gBox = { BOX_X, BOX_Y, BOX_W, BOX_H };  /* 전투 박스(CombatZoneResize로 변경) */
+static VM     gVM;
+static VMHost gHost;
+static int    gUseVM = 0;       /* 1=VM 공격 구동중, 0=Slice2 패턴 폴백 */
+static int    gSoulMode = 0;    /* 0=빨강,1=파랑(BLUE 물리는 Slice4) */
+static int    gAttackEnded = 0;
+static float  gPrevSx = 0.0f, gPrevSy = 0.0f;
+static int    gDebug = 0;       /* F1 디버그 오버레이 */
+static char   gAtkName[32] = "";
+
 /* 키 엣지 검출용 이전 상태 */
 static int gPrevZ = 0, gPrevLeft = 0, gPrevRight = 0;
 
@@ -126,6 +138,7 @@ static void startBattle(void);
 static void startTurn(void);
 static void startEnemyPhase(void);
 static void advanceTurn(void);
+static int  RunAttack(const char* name);
 
 /* ---------------- 유틸 ([구현조건: 사용자정의함수]) ---------------- */
 static int   keyDown(int vk) {                                                             /* [구현조건: 키보드입력] */
@@ -249,6 +262,9 @@ static void startEnemyPhase(void) {
     clearHazards(); centerSoul();
     gSpawnTimer = 0.0f; gBlasterTimer = 0.6f;
     gEnemyTime = ENEMY_DURATION;
+    gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
+    gAttackEnded = 0;
+    gUseVM = RunAttack("sans_bonegap1");   /* VM 공격 시도 (실패 시 Slice2 패턴 폴백) */
 }
 static void advanceTurn(void) {
     gTurn++;
@@ -295,10 +311,46 @@ static void hurtSoul(void) {
     if (gSoul.hp <= 0) { gSoul.hp = 0; gState = ST_GAMEOVER; stopBGM(); }
 }
 
+/* --- hazards/VM 가 호출하는 game 후크 (game.h 선언) --- */
+void game_get_heart(double* cx, double* cy) { *cx = gSoul.x + SOUL_SIZE / 2.0; *cy = gSoul.y + SOUL_SIZE / 2.0; }
+int  game_heart_moving(void) { return (gSoul.x != gPrevSx) || (gSoul.y != gPrevSy); }
+void game_hurt(int dmg, int karma) {
+    (void)karma;
+    if (gSoul.invuln > 0.0f) return;
+    gSoul.hp -= dmg; gSoul.invuln = 1.0f;
+    if (gSoul.hp <= 0) { gSoul.hp = 0; gState = ST_GAMEOVER; stopBGM(); }
+}
+void game_set_heart_mode(int blue) { gSoulMode = blue; }
+void game_teleport_heart(double x, double y) {
+    gSoul.x = (float)(x - SOUL_SIZE / 2.0); gSoul.y = (float)(y - SOUL_SIZE / 2.0);
+}
+void game_end_attack(void) { gAttackEnded = 1; }
+
+/* attacks/<name>.csv 를 읽어 VM 로드. 성공 1, 실패(파일 없음) 0. */
+static int RunAttack(const char* name) {
+    char rel[260]; const char* path; FILE* f; long n; char* text;
+    wsprintfA(rel, "attacks\\%s.csv", name);
+    path = assetPath(rel);
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    fseek(f, 0, SEEK_END); n = ftell(f); fseek(f, 0, SEEK_SET);
+    if (n <= 0) { fclose(f); return 0; }
+    text = (char*)malloc((size_t)n + 1);
+    if (!text) { fclose(f); return 0; }
+    fread(text, 1, (size_t)n, f); text[n] = 0; fclose(f);
+    vm_load(&gVM, text, gHost);   /* code[]로 복사하므로 text 해제 가능 */
+    free(text);
+    haz_reset(); haz_set_vm(&gVM);
+    strncpy(gAtkName, name, 31); gAtkName[31] = 0;
+    return 1;
+}
+
 static void updateEnemyPhase(float dt) {
     float dx = 0.0f, dy = 0.0f;
     const float speed = 160.0f;
     int i;
+
+    gPrevSx = gSoul.x; gPrevSy = gSoul.y;   /* 이동 판정용 직전 위치 */
 
     /* 영혼 이동 [구현조건: 키보드입력] */
     if (keyDown(VK_LEFT)  || keyDown('A')) dx -= 1.0f;
@@ -307,15 +359,29 @@ static void updateEnemyPhase(float dt) {
     if (keyDown(VK_DOWN)  || keyDown('S')) dy += 1.0f;
     gSoul.x += dx * speed * dt;
     gSoul.y += dy * speed * dt;
+    if (gSoul.invuln > 0.0f) gSoul.invuln -= dt;
+
+    if (gUseVM) {
+        /* gBox 경계 클램프 */
+        if (gSoul.x < gBox.x + 2)                      gSoul.x = (float)(gBox.x + 2);
+        if (gSoul.y < gBox.y + 2)                      gSoul.y = (float)(gBox.y + 2);
+        if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
+        if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
+        vm_step(&gVM, dt);
+        haz_update(dt);
+        if (gState != ST_BATTLE) return;            /* 피격으로 게임오버됐을 수 있음 */
+        if (gAttackEnded || (gVM.finished && !vm_is_running(&gVM))) {
+            haz_reset(); gPhase = PH_MENU; gMenuIndex = 0;
+        }
+        return;
+    }
+
+    /* --- 기존 Slice2 패턴 (VM 로드 실패 시 폴백) --- */
     if (gSoul.x < BOX_X + 2)                    gSoul.x = (float)(BOX_X + 2);
     if (gSoul.y < BOX_Y + 2)                    gSoul.y = (float)(BOX_Y + 2);
     if (gSoul.x > BOX_X + BOX_W - 2 - SOUL_SIZE) gSoul.x = (float)(BOX_X + BOX_W - 2 - SOUL_SIZE);
     if (gSoul.y > BOX_Y + BOX_H - 2 - SOUL_SIZE) gSoul.y = (float)(BOX_Y + BOX_H - 2 - SOUL_SIZE);
-
-    if (gSoul.invuln > 0.0f) gSoul.invuln -= dt;
-
     if (gTurn % 2 == 0) {
-        /* 짝수 턴: 뼈 탄막 */
         gSpawnTimer -= dt;
         if (gSpawnTimer <= 0.0f) { spawnBone(); gSpawnTimer = frand(0.32f, 0.62f); }
         for (i = 0; i < MAX_BONES; i++) {
@@ -327,25 +393,23 @@ static void updateEnemyPhase(float dt) {
                 hurtSoul();
         }
     } else {
-        /* 홀수 턴: 게이스터 블래스터 */
         gBlasterTimer -= dt;
         if (gBlasterTimer <= 0.0f) { spawnBlaster(); gBlasterTimer = frand(1.0f, 1.5f); }
         for (i = 0; i < MAX_BLASTERS; i++) {
             if (!gBlasters[i].active) continue;
             gBlasters[i].timer -= dt;
-            if (gBlasters[i].state == 0) {            /* 충전 */
+            if (gBlasters[i].state == 0) {
                 if (gBlasters[i].timer <= 0.0f) { gBlasters[i].state = 1; gBlasters[i].timer = 0.55f; }
-            } else if (gBlasters[i].state == 1) {     /* 발사: 가로 빔 */
+            } else if (gBlasters[i].state == 1) {
                 if (rectsOverlap(gSoul.x, gSoul.y, SOUL_SIZE, SOUL_SIZE,
                                  (float)BOX_X, (float)gBlasters[i].beamY, (float)BOX_W, (float)gBlasters[i].beamH))
                     hurtSoul();
                 if (gBlasters[i].timer <= 0.0f) { gBlasters[i].state = 2; gBlasters[i].timer = 0.2f; }
-            } else {                                  /* 소멸 */
+            } else {
                 if (gBlasters[i].timer <= 0.0f) gBlasters[i].active = 0;
             }
         }
     }
-
     gEnemyTime -= dt;
     if (gEnemyTime <= 0.0f && gState == ST_BATTLE) {
         clearHazards();
@@ -504,9 +568,15 @@ static void render(void) {
     /* ---- 전투 ---- */
     drawSansHead();
 
-    /* 전투 박스 */
-    fillRect(gMemDC, BOX_X - 3, BOX_Y - 3, BOX_W + 6, BOX_H + 6, gWhite);
-    fillRect(gMemDC, BOX_X, BOX_Y, BOX_W, BOX_H, gBlack);
+    /* 전투 박스 (VM 공격 중엔 동적 gBox 사용) */
+    {
+        int bx = (gUseVM && gPhase == PH_ENEMY) ? gBox.x : BOX_X;
+        int by = (gUseVM && gPhase == PH_ENEMY) ? gBox.y : BOX_Y;
+        int bw = (gUseVM && gPhase == PH_ENEMY) ? gBox.w : BOX_W;
+        int bh = (gUseVM && gPhase == PH_ENEMY) ? gBox.h : BOX_H;
+        fillRect(gMemDC, bx - 3, by - 3, bw + 6, bh + 6, gWhite);
+        fillRect(gMemDC, bx, by, bw, bh, gBlack);
+    }
 
     if (gPhase == PH_DIALOGUE) {
         const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
@@ -517,7 +587,9 @@ static void render(void) {
         drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else if (gPhase == PH_ENEMY) {
-        if (gTurn % 2 == 0) {
+        if (gUseVM) {
+            haz_render(gMemDC);   /* VM 탄막 렌더 */
+        } else if (gTurn % 2 == 0) {
             for (i = 0; i < MAX_BONES; i++)
                 if (gBones[i].active)
                     fillRect(gMemDC, (int)gBones[i].x, (int)gBones[i].y, gBones[i].w, gBones[i].h, gWhite);
@@ -555,6 +627,19 @@ static void render(void) {
     drawMenuButton(&gSprAct,   L"ACT",   1);
     drawMenuButton(&gSprItem,  L"ITEM",  2);
     drawMenuButton(&gSprMercy, L"MERCY", 3);
+
+    /* F1 디버그 오버레이: VM 상태(핑퐁 진단용) */
+    if (gDebug) {
+        char dbg[160]; HFONT of;
+        wsprintfA(dbg, "VM:%s pc=%d t=%dms run=%d fin=%d bones=%d box=%d,%d,%d,%d mode=%d",
+                  gUseVM ? gAtkName : "(off)", gVM.pc, (int)(gVM.t * 1000.0f),
+                  gVM.running, gVM.finished, haz_active_count(),
+                  gBox.x, gBox.y, gBox.w, gBox.h, gSoulMode);
+        of = (HFONT)SelectObject(gMemDC, gFontTiny);
+        SetBkMode(gMemDC, TRANSPARENT); SetTextColor(gMemDC, RGB(0, 255, 0));
+        TextOutA(gMemDC, 4, 2, dbg, (int)strlen(dbg));
+        SelectObject(gMemDC, of);
+    }
 }
 
 /* ---------------- Win32 ---------------- */
@@ -562,7 +647,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_DESTROY: PostQuitMessage(0); return 0;
     case WM_CLOSE:   DestroyWindow(h); return 0;
-    case WM_KEYDOWN: if (w == VK_ESCAPE) DestroyWindow(h); return 0;
+    case WM_KEYDOWN:
+        if (w == VK_ESCAPE) DestroyWindow(h);
+        else if (w == VK_F1) gDebug ^= 1;   /* 디버그 오버레이 토글 */
+        return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
         if (gMemDC) BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
@@ -678,6 +766,9 @@ int main(void) {
     }
 
     initResources();
+    gHost.on_command = haz_on_command;     /* VM → 게임 명령 라우팅 */
+    gHost.get_heart_pos = haz_get_heart_pos;
+    gHost.ctx = NULL;
     ShowWindow(gHwnd, show);
     UpdateWindow(gHwnd);
 
