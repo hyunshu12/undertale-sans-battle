@@ -916,6 +916,30 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcA(h, m, w, l);
 }
 
+/* MCI 오디오(음성+효과음)를 시작 시 한 번에 연다.
+   BGM(PlaySound SND_LOOP)이 켜진 뒤 게임 루프 안에서 MCI 'open'을 호출하면
+   오디오 장치 경합으로 mciSendString이 블록되어 게임이 멈추는 문제가 있다.
+   → BGM 시작(startBattle) 전인 여기서 미리 열어두고, 이후엔 'play'만 한다. */
+static void openAllAudio(void) {
+    static const char* sfx[] = {
+        "GasterBlaster", "GasterBlast", "Ding", "Flash",
+        "Slam", "Warning", "BoneStab", "PlayerDamaged"
+    };
+    char cmd[400], rel[64], alias[40]; int i;
+    if (!gVoiceOpen) {
+        wsprintfA(cmd, "open \"%s\" type waveaudio alias spk", assetPath("sans_speak.wav"));
+        if (mciSendStringA(cmd, NULL, 0, NULL) == 0) gVoiceOpen = 1;
+    }
+    for (i = 0; i < 8; i++) {
+        wsprintfA(alias, "sfx_%s", sfx[i]);
+        wsprintfA(rel, "sfx_%s.wav", sfx[i]);
+        wsprintfA(cmd, "open \"%s\" type waveaudio alias %s", assetPath(rel), alias);
+        if (mciSendStringA(cmd, NULL, 0, NULL) == 0 && gSfxN < 16) {
+            strncpy(gSfxOpen[gSfxN], alias, 39); gSfxOpen[gSfxN][39] = 0; gSfxN++;
+        }
+    }
+}
+
 static void initResources(void) {
     HDC wdc = GetDC(gHwnd);
     gMemDC  = CreateCompatibleDC(wdc);
@@ -1024,6 +1048,7 @@ int main(void) {
     }
 
     initResources();
+    openAllAudio();                        /* BGM 켜기 전에 MCI 음성/효과음 장치 미리 열기(루프 멈춤 방지) */
     gHost.on_command = haz_on_command;     /* VM → 게임 명령 라우팅 */
     gHost.get_heart_pos = haz_get_heart_pos;
     gHost.ctx = NULL;
