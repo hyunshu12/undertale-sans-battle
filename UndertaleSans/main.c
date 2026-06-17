@@ -16,9 +16,12 @@
  *   4턴 생존 후 MERCY 선택 시 자비 엔딩
  */
 
+#ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>   /* PlaySound, SND_*, timeBeginPeriod/timeEndPeriod */
 #include <stdlib.h>   /* rand, srand, RAND_MAX */
 #include <string.h>   /* strlen, strrchr */
 #include <stdio.h>    /* fopen (에셋 경로 확인) */
