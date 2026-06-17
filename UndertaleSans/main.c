@@ -118,6 +118,14 @@ static int    gAttackEnded = 0;
 static float  gPrevSx = 0.0f, gPrevSy = 0.0f;
 static int    gDebug = 0;       /* F1 디버그 오버레이 */
 static char   gAtkName[32] = "";
+static int    gAtkIndex = 0;    /* 공격 시퀀스 인덱스 */
+static double gMaxFall = 750.0; /* HeartMaxFallSpeed (BLUE 물리는 다음 푸시) */
+static int    gBlackScreen = 0;
+static float  gShakeI = 0.0f, gShakeT = 0.0f;
+static int    gShakeDx = 0, gShakeDy = 0;
+static wchar_t gBubble[256] = L"";   /* 샌즈 말풍선(한국어) */
+static int    gBubbleLen = 0;
+static float  gBubbleType = 0.0f, gBubbleTimer = 0.0f;
 
 /* 키 엣지 검출용 이전 상태 */
 static int gPrevZ = 0, gPrevLeft = 0, gPrevRight = 0;
@@ -279,10 +287,13 @@ static void startEnemyPhase(void) {
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
     {   /* 턴마다 다른 공격(뼈 기반 패턴 순환). 전체 흐름은 Slice4-5에서 페이즈 디스패처로 */
-        static const char* atks[] = {
-            "sans_bonegap1", "sans_boneslideh", "sans_bluebone", "sans_bonegap2", "sans_boneslidev"
+        static const char* seq[] = {
+            "sans_intro", "sans_bonegap1", "sans_bluebone", "sans_bonegap2",
+            "sans_boneslideh", "sans_boneslidev", "sans_platforms1",
+            "sans_platformblaster", "sans_randomblaster1", "sans_multi1"
         };
-        gUseVM = RunAttack(atks[gTurn % 5]);   /* 실패 시 Slice2 패턴 폴백 */
+        gUseVM = RunAttack(seq[gAtkIndex % 10]);   /* 실패 시 Slice2 패턴 폴백 */
+        gAtkIndex++;
     }
 }
 static void advanceTurn(void) {
@@ -344,6 +355,26 @@ void game_teleport_heart(double x, double y) {
     gSoul.x = (float)(x - SOUL_SIZE / 2.0); gSoul.y = (float)(y - SOUL_SIZE / 2.0);
 }
 void game_end_attack(void) { gAttackEnded = 1; }
+void game_set_max_fall(double v) { gMaxFall = v; }
+double game_get_max_fall(void) { return gMaxFall; }
+void game_play_sound(const char* name) { (void)name; /* TODO: 공격 효과음 wav 매핑(다음 푸시) */ }
+void game_shake(double intensity) { if ((float)intensity > gShakeI) gShakeI = (float)intensity; }
+void game_set_blackscreen(int on) { gBlackScreen = on; }
+/* 알려진 샌즈 대사 한국어 매핑(없으면 영어 그대로 와이드 변환) */
+static const wchar_t* sansTextKor(const char* en) {
+    static wchar_t buf[256]; int i;
+    if (strcmp(en, "ready?") == 0) return L"준비됐어?";
+    if (strcmp(en, "here we go.") == 0) return L"자, 간다.";
+    if (strcmp(en, "huff... puff...") == 0) return L"헉... 헉...";
+    if (strcmp(en, "alright, i guess you win.") == 0) return L"그래... 네가 이긴 걸로 하지.";
+    for (i = 0; en[i] && i < 255; i++) buf[i] = (wchar_t)(unsigned char)en[i];
+    buf[i] = 0; return buf;
+}
+void game_sans_text(const char* text) {
+    lstrcpynW(gBubble, sansTextKor(text), 255);
+    gBubbleLen = (int)wcslen(gBubble);
+    gBubbleType = 0.0f; gBubbleTimer = 3.0f;
+}
 
 /* attacks/<name>.csv 를 읽어 VM 로드. 성공 1, 실패(파일 없음) 0. */
 static int RunAttack(const char* name) {
@@ -481,11 +512,29 @@ static void update(float dt) {
 
     gMenacePulse += dt;
 
+    /* 화면 흔들림 감쇠 */
+    if (gShakeI > 0.0f) {
+        gShakeT -= dt;
+        if (gShakeT <= 0.0f) {
+            gShakeDx = (int)frand(-gShakeI, gShakeI);
+            gShakeDy = (int)frand(-gShakeI, gShakeI);
+            gShakeT = 1.0f / 30.0f;
+            gShakeI -= dt * 60.0f;
+            if (gShakeI < 0.0f) gShakeI = 0.0f;
+        }
+    } else { gShakeDx = 0; gShakeDy = 0; }
+
     switch (gState) {
     case ST_TITLE:
         if (zPressed) startBattle();
         break;
     case ST_BATTLE:
+        if (gBubbleLen > 0) {           /* 샌즈 말풍선 타이핑/표시 */
+            if (gBubbleType < gBubbleLen) {
+                gBubbleType += dt * 24.0f;
+                gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; }
+            } else { gBubbleTimer -= dt; if (gBubbleTimer <= 0.0f) gBubbleLen = 0; }
+        }
         if (gPhase == PH_DIALOGUE) {
             const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
             int len = (int)wcslen(line);
@@ -589,6 +638,15 @@ static void render(void) {
     /* ---- 전투 ---- */
     drawSansHead();
 
+    /* 샌즈 말풍선(한국어) — 흰 풍선 + 검은 글씨 */
+    if (gBubbleLen > 0) {
+        int n = (int)gBubbleType; wchar_t bb[256];
+        if (n > gBubbleLen) n = gBubbleLen;
+        wmemcpy(bb, gBubble, n); bb[n] = L'\0';
+        fillRect(gMemDC, 384, 54, 234, 62, gWhite);
+        drawTextWrapped(392, 60, 218, 50, bb, RGB(0, 0, 0), gFontSmall);
+    }
+
     /* 전투 박스 (VM 공격 중엔 동적 gBox 사용) */
     {
         int bx = (gUseVM && gPhase == PH_ENEMY) ? gBox.x : BOX_X;
@@ -648,6 +706,8 @@ static void render(void) {
     drawMenuButton(&gSprAct,   L"ACT",   1);
     drawMenuButton(&gSprItem,  L"ITEM",  2);
     drawMenuButton(&gSprMercy, L"MERCY", 3);
+
+    if (gBlackScreen) fillRect(gMemDC, 0, 0, CLIENT_W, CLIENT_H, gBlack);  /* 플래시 연출 */
 
     /* F1 디버그 오버레이: VM 상태(핑퐁 진단용) */
     if (gDebug) {
@@ -817,7 +877,7 @@ int main(void) {
                 render();
                 {
                     HDC dc = GetDC(gHwnd);
-                    BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
+                    BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, gShakeDx, gShakeDy, SRCCOPY);
                     ReleaseDC(gHwnd, dc);
                 }
             }
