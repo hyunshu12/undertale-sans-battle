@@ -25,6 +25,7 @@
 #include <stdlib.h>   /* rand, srand, RAND_MAX */
 #include <string.h>   /* strlen, strrchr */
 #include <stdio.h>    /* fopen (에셋 경로 확인) */
+#include <wchar.h>    /* wcslen, wmemcpy (한글 유니코드 출력) */
 #include <time.h>
 
 #pragma comment(lib, "gdi32.lib")
@@ -85,6 +86,7 @@ static HDC      gMemDC;
 static HBITMAP  gMemBmp, gOldBmp;
 static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan;
 static HFONT    gFontBig, gFontSmall, gFontTiny;
+static int      gPixelFontOk = 0;   /* 네오둥근모 픽셀 폰트 로드 성공 여부 */
 static int      gRunning = 1;
 
 static Sprite   gSprHead, gSprHeadBlue, gSprHeart, gSprBlaster, gSprBlasterFire;
@@ -102,20 +104,20 @@ static float     gSpawnTimer = 0.0f;
 static float     gBlasterTimer = 0.0f;
 static float     gEnemyTime = 0.0f;
 static float     gTypePos = 0.0f;          /* 타이핑 진행 글자수 */
-static char      gMessage[160] = "";       /* 액션 메시지 */
+static wchar_t   gMessage[160] = L"";      /* 액션 메시지 */
 static float     gMenacePulse = 0.0f;      /* 샌즈 파란 눈 토글 */
 
 /* 키 엣지 검출용 이전 상태 */
 static int gPrevZ = 0, gPrevLeft = 0, gPrevRight = 0;
 
 /* 대사 ([구현조건: 배열]) */
-static const char* gDialogues[] = {
-    "* it's a beautiful day outside.",
-    "* birds are singing, flowers are blooming...",
-    "* on days like these, kids like you...",
-    "* should be burning in hell.",
-    "* heh. you're still standing?",
-    "* ...maybe you should just give me a break."
+static const wchar_t* gDialogues[] = {
+    L"* 오늘은 밖이 참 아름다운 날이지.",
+    L"* 새들은 지저귀고, 꽃들은 피어나고...",
+    L"* 이런 날엔 말이야, 너 같은 녀석들은...",
+    L"* 지옥에서 불타고 있어야 하는 거야.",
+    L"* 흥. 아직도 멀쩡히 서 있네?",
+    L"* ...이쯤에서 그만 좀 봐주지 그래."
 };
 #define DIALOGUE_COUNT 6
 
@@ -139,19 +141,27 @@ static int rectsOverlap(float ax, float ay, float aw, float ah,
 static void fillRect(HDC dc, int x, int y, int w, int h, HBRUSH br) {
     RECT r; r.left = x; r.top = y; r.right = x + w; r.bottom = y + h; FillRect(dc, &r, br);
 }
-static void drawText(HDC dc, int x, int y, const char* s, COLORREF col, HFONT f) {
+static void drawText(HDC dc, int x, int y, const wchar_t* s, COLORREF col, HFONT f) {
     HFONT old = (HFONT)SelectObject(dc, f);
     SetBkMode(dc, TRANSPARENT); SetTextColor(dc, col);
-    TextOutA(dc, x, y, s, (int)strlen(s));
+    TextOutW(dc, x, y, s, (int)wcslen(s));   /* 유니코드 출력(한글 지원) */
     SelectObject(dc, old);
 }
 /* 사각형 영역 안에서 자동 줄바꿈(긴 대사/메시지가 박스 밖으로 새지 않게) */
-static void drawTextWrapped(int x, int y, int w, int h, const char* s, COLORREF col, HFONT f) {
+static void drawTextWrapped(int x, int y, int w, int h, const wchar_t* s, COLORREF col, HFONT f) {
     RECT r; HFONT old;
     r.left = x; r.top = y; r.right = x + w; r.bottom = y + h;
     old = (HFONT)SelectObject(gMemDC, f);
     SetBkMode(gMemDC, TRANSPARENT); SetTextColor(gMemDC, col);
-    DrawTextA(gMemDC, s, -1, &r, DT_WORDBREAK | DT_NOPREFIX);
+    DrawTextW(gMemDC, s, -1, &r, DT_WORDBREAK | DT_NOPREFIX);
+    SelectObject(gMemDC, old);
+}
+/* cx를 기준으로 가로 중앙 정렬해 출력(한/영 폭 차이에도 정렬 유지) */
+static void drawTextCentered(int cx, int y, const wchar_t* s, COLORREF col, HFONT f) {
+    SIZE sz; HFONT old = (HFONT)SelectObject(gMemDC, f);
+    GetTextExtentPoint32W(gMemDC, s, (int)wcslen(s), &sz);
+    SetBkMode(gMemDC, TRANSPARENT); SetTextColor(gMemDC, col);
+    TextOutW(gMemDC, cx - sz.cx / 2, y, s, (int)wcslen(s));
     SelectObject(gMemDC, old);
 }
 
@@ -348,23 +358,23 @@ static void updateEnemyPhase(float dt) {
 static void doAction(int idx) {
     switch (idx) {
     case 0: /* FIGHT */
-        lstrcpyA(gMessage, "* You attack! ...but sans dodges. MISS!");
+        lstrcpyW(gMessage, L"* 공격! ...하지만 샌즈가 피했다. 빗나감!");
         break;
     case 1: /* ACT */
-        lstrcpyA(gMessage, "* Check.  SANS - ATK 1 DEF 1.\n* the easiest enemy. can only deal 1 damage.");
+        lstrcpyW(gMessage, L"* 관찰.  샌즈 - 공격 1 방어 1.\n* 가장 약한 적. 1의 피해만 줄 수 있다.");
         break;
     case 2: /* ITEM */
         if (gItemsLeft > 0) {
             gItemsLeft--;
             gSoul.hp += 20; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
-            wsprintfA(gMessage, "* You eat a Monster Candy. (+20 HP)\n* (%d left)", gItemsLeft);
+            wsprintfW(gMessage, L"* 몬스터 캔디를 먹었다. (+20 HP)\n* (%d개 남음)", gItemsLeft);
         } else {
-            lstrcpyA(gMessage, "* You're out of items.");
+            lstrcpyW(gMessage, L"* 아이템이 다 떨어졌다.");
         }
         break;
     default: /* MERCY */
         if (gTurn + 1 >= MERCY_TURNS) { gState = ST_WIN; stopBGM(); return; }
-        lstrcpyA(gMessage, "* Sans isn't ready to give up yet.");
+        lstrcpyW(gMessage, L"* 샌즈는 아직 포기할 생각이 없어 보인다.");
         break;
     }
     gPhase = PH_ACTION;
@@ -394,8 +404,8 @@ static void update(float dt) {
         break;
     case ST_BATTLE:
         if (gPhase == PH_DIALOGUE) {
-            const char* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
-            int len = (int)strlen(line);
+            const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
+            int len = (int)wcslen(line);
             gTypePos += dt * 28.0f;                 /* 타이핑 속도 */
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;  /* 1회 누르면 즉시 완성 */
@@ -406,7 +416,7 @@ static void update(float dt) {
         } else if (gPhase == PH_MENU) {
             updateMenuPhase(lPressed, rPressed, zPressed);
         } else { /* PH_ACTION */
-            int len = (int)strlen(gMessage);
+            int len = (int)wcslen(gMessage);
             gTypePos += dt * 32.0f;
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;
@@ -433,7 +443,7 @@ static void drawSansHead(void) {
     fillRect(gMemDC, SANS_X + 74, SANS_Y + 32, 14, 16, menace ? gCyan : gBlack);
     fillRect(gMemDC, SANS_X + 40, SANS_Y + 60, 48, 6, gBlack);
 }
-static void drawMenuButton(Sprite* s, const char* label, int idx) {
+static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
     int x = BTN_X0 + idx * BTN_STEP;
     if (s->ok) drawSprite(s, x, BTN_Y);
     else { fillRect(gMemDC, x, BTN_Y, BTN_W, BTN_H, gDkRed); drawText(gMemDC, x + 14, BTN_Y + 10, label, RGB(255, 160, 0), gFontSmall); }
@@ -451,11 +461,11 @@ static void drawMenuButton(Sprite* s, const char* label, int idx) {
 static void drawHpBar(void) {
     int hpx = 250, hpy = 350, hpw = 120, hph = 20;
     int cur = (int)(hpw * (gSoul.hp / (float)gSoul.maxHp));
-    char buf[48];
-    drawText(gMemDC, 120, hpy - 1, "CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
+    wchar_t buf[48];
+    drawText(gMemDC, 120, hpy - 1, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
     fillRect(gMemDC, hpx, hpy, hpw, hph, gDkRed);
     fillRect(gMemDC, hpx, hpy, cur, hph, gYellow);
-    wsprintfA(buf, "HP %d / %d", gSoul.hp, gSoul.maxHp);
+    wsprintfW(buf, L"HP %d / %d", gSoul.hp, gSoul.maxHp);
     drawText(gMemDC, hpx + hpw + 12, hpy - 1, buf, RGB(255, 255, 255), gFontSmall);
 }
 static void drawSoul(void) {
@@ -470,24 +480,24 @@ static void render(void) {
     fillRect(gMemDC, 0, 0, CLIENT_W, CLIENT_H, gBlack);
 
     if (gState == ST_TITLE) {
-        drawText(gMemDC, CLIENT_W / 2 - 145, 120, "UNDERTALE", RGB(255, 255, 255), gFontBig);
-        drawText(gMemDC, CLIENT_W / 2 - 95, 230, "* Sans Battle (Slice 2)", RGB(255, 255, 255), gFontSmall);
-        drawText(gMemDC, CLIENT_W / 2 - 110, 285, "Press Z or Enter to start", RGB(255, 255, 0), gFontSmall);
-        drawText(gMemDC, CLIENT_W / 2 - 130, 320, "Move: Arrows/WASD   Menu: <- ->  Confirm: Z", RGB(150, 150, 150), gFontTiny);
-        drawText(gMemDC, CLIENT_W / 2 - 30, 345, "Quit: ESC", RGB(150, 150, 150), gFontTiny);
+        drawTextCentered(CLIENT_W / 2, 118, L"UNDERTALE", RGB(255, 255, 255), gFontBig);
+        drawTextCentered(CLIENT_W / 2, 232, L"* 샌즈와의 전투", RGB(255, 255, 255), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 286, L"Z 또는 Enter를 눌러 시작", RGB(255, 255, 0), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 324, L"이동: 방향키/WASD    메뉴: ← →    확인: Z", RGB(160, 160, 160), gFontTiny);
+        drawTextCentered(CLIENT_W / 2, 348, L"종료: ESC", RGB(160, 160, 160), gFontTiny);
         return;
     }
     if (gState == ST_GAMEOVER) {
-        drawText(gMemDC, CLIENT_W / 2 - 115, 175, "GAME OVER", RGB(255, 0, 0), gFontBig);
-        drawText(gMemDC, CLIENT_W / 2 - 90, 280, "* Stay determined...", RGB(255, 255, 255), gFontSmall);
-        drawText(gMemDC, CLIENT_W / 2 - 120, 320, "Press Z to return to title", RGB(255, 255, 0), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 172, L"GAME OVER", RGB(255, 0, 0), gFontBig);
+        drawTextCentered(CLIENT_W / 2, 284, L"* 의지를 잃지 마...", RGB(255, 255, 255), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 324, L"Z를 눌러 타이틀로 돌아가기", RGB(255, 255, 0), gFontSmall);
         return;
     }
     if (gState == ST_WIN) {
         drawSansHead();
-        drawText(gMemDC, CLIENT_W / 2 - 130, 200, "* welp. i'm going to grillby's.", RGB(255, 255, 255), gFontSmall);
-        drawText(gMemDC, CLIENT_W / 2 - 130, 240, "YOU WON.  (Mercy)", RGB(255, 255, 0), gFontBig);
-        drawText(gMemDC, CLIENT_W / 2 - 120, 310, "Press Z to return to title", RGB(255, 255, 0), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 200, L"* 흠. 난 그릴비네 가게나 가야겠다.", RGB(255, 255, 255), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 240, L"승리!  (자비)", RGB(255, 255, 0), gFontBig);
+        drawTextCentered(CLIENT_W / 2, 308, L"Z를 눌러 타이틀로 돌아가기", RGB(255, 255, 0), gFontSmall);
         return;
     }
 
@@ -499,13 +509,13 @@ static void render(void) {
     fillRect(gMemDC, BOX_X, BOX_Y, BOX_W, BOX_H, gBlack);
 
     if (gPhase == PH_DIALOGUE) {
-        const char* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
-        int n = (int)gTypePos; int len = (int)strlen(line);
-        char buf[160];
+        const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
+        int n = (int)gTypePos; int len = (int)wcslen(line);
+        wchar_t buf[160];
         if (n > len) n = len;
-        memcpy(buf, line, n); buf[n] = '\0';
+        wmemcpy(buf, line, n); buf[n] = L'\0';
         drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
-        if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, "[Z]", RGB(255, 255, 0), gFontTiny);
+        if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else if (gPhase == PH_ENEMY) {
         if (gTurn % 2 == 0) {
             for (i = 0; i < MAX_BONES; i++)
@@ -528,23 +538,23 @@ static void render(void) {
         }
         drawSoul();
     } else if (gPhase == PH_ACTION) {
-        int n = (int)gTypePos; int len = (int)strlen(gMessage);
-        char buf[160];
+        int n = (int)gTypePos; int len = (int)wcslen(gMessage);
+        wchar_t buf[160];
         if (n > len) n = len;
-        memcpy(buf, gMessage, n); buf[n] = '\0';
+        wmemcpy(buf, gMessage, n); buf[n] = L'\0';
         drawTextWrapped(BOX_X + 12, BOX_Y + 14, BOX_W - 24, BOX_H - 30, buf, RGB(255, 255, 255), gFontSmall);
-        if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, "[Z]", RGB(255, 255, 0), gFontTiny);
+        if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else { /* PH_MENU */
-        drawText(gMemDC, BOX_X + 12, BOX_Y + 16, "* SANS is sparing you.", RGB(255, 255, 255), gFontSmall);
+        drawText(gMemDC, BOX_X + 12, BOX_Y + 16, L"* 무엇을 할까...", RGB(255, 255, 255), gFontSmall);
         if (gTurn + 1 >= MERCY_TURNS)
-            drawText(gMemDC, BOX_X + 12, BOX_Y + 44, "* (MERCY available!)", RGB(255, 255, 0), gFontTiny);
+            drawText(gMemDC, BOX_X + 12, BOX_Y + 44, L"* (자비 가능!)", RGB(255, 255, 0), gFontTiny);
     }
 
     drawHpBar();
-    drawMenuButton(&gSprFight, "FIGHT", 0);
-    drawMenuButton(&gSprAct,   "ACT",   1);
-    drawMenuButton(&gSprItem,  "ITEM",  2);
-    drawMenuButton(&gSprMercy, "MERCY", 3);
+    drawMenuButton(&gSprFight, L"FIGHT", 0);
+    drawMenuButton(&gSprAct,   L"ACT",   1);
+    drawMenuButton(&gSprItem,  L"ITEM",  2);
+    drawMenuButton(&gSprMercy, L"MERCY", 3);
 }
 
 /* ---------------- Win32 ---------------- */
@@ -577,9 +587,17 @@ static void initResources(void) {
     gDkRed  = CreateSolidBrush(RGB(90, 0, 0));
     gCyan   = CreateSolidBrush(RGB(0, 220, 255));
 
-    gFontBig   = CreateFontA(48, 0, 0, 0, FW_BOLD,   0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, 0, "Consolas");
-    gFontSmall = CreateFontA(18, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, 0, "Consolas");
-    gFontTiny  = CreateFontA(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, 0, 0, "Consolas");
+    /* 언더테일 한국어 패치 느낌의 픽셀 글꼴(네오둥근모)을 설치 없이 런타임 로드.
+       실패하면 맑은 고딕으로 폴백. 픽셀 폰트는 안티에일리어싱을 꺼 또렷하게. */
+    {
+        const char* face; DWORD qual;
+        gPixelFontOk = (AddFontResourceExA(assetPath("neodgm.ttf"), FR_PRIVATE, NULL) > 0);
+        face = gPixelFontOk ? "NeoDunggeunmo" : "Malgun Gothic";
+        qual = gPixelFontOk ? NONANTIALIASED_QUALITY : DEFAULT_QUALITY;
+        gFontBig   = CreateFontA(48, 0, 0, 0, FW_NORMAL, 0, 0, 0, HANGEUL_CHARSET, 0, 0, qual, 0, face);
+        gFontSmall = CreateFontA(16, 0, 0, 0, FW_NORMAL, 0, 0, 0, HANGEUL_CHARSET, 0, 0, qual, 0, face);
+        gFontTiny  = CreateFontA(16, 0, 0, 0, FW_NORMAL, 0, 0, 0, HANGEUL_CHARSET, 0, 0, qual, 0, face);
+    }
 
     /* 스프라이트 로드(실패해도 폴백) */
     gSprHead        = loadSprite("sans_head.bmp");
@@ -602,6 +620,7 @@ static void freeResources(void) {
     DeleteObject(gBlack); DeleteObject(gWhite); DeleteObject(gRed); DeleteObject(gYellow);
     DeleteObject(gBlue); DeleteObject(gDkRed); DeleteObject(gCyan);
     DeleteObject(gFontBig); DeleteObject(gFontSmall); DeleteObject(gFontTiny);
+    if (gPixelFontOk) RemoveFontResourceExA(assetPath("neodgm.ttf"), FR_PRIVATE, NULL);
 }
 
 int main(void) {
