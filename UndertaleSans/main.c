@@ -126,6 +126,10 @@ static int    gShakeDx = 0, gShakeDy = 0;
 static wchar_t gBubble[256] = L"";   /* 샌즈 말풍선(한국어) */
 static int    gBubbleLen = 0;
 static float  gBubbleType = 0.0f, gBubbleTimer = 0.0f;
+static float  gVx = 0.0f, gVy = 0.0f;   /* 파란 영혼 속도(px/s) */
+static int    gPrevUp = 0;              /* 점프키 엣지 검출 */
+static int    gKR = 0;                  /* KARMA(누적 카르마 데미지) */
+static float  gKR_t = 0.0f;
 
 /* 키 엣지 검출용 이전 상태 */
 static int gPrevZ = 0, gPrevLeft = 0, gPrevRight = 0;
@@ -269,6 +273,7 @@ static void centerSoul(void) {
 }
 static void startBattle(void) {
     gSoul.maxHp = MAX_HP; gSoul.hp = MAX_HP; gSoul.invuln = 0.0f;
+    gKR = 0; gKR_t = 0.0f; gAtkIndex = 0;
     gTurn = 0; gMenuIndex = 0; gItemsLeft = 3;
     clearHazards(); centerSoul();
     gState = ST_BATTLE;
@@ -286,6 +291,7 @@ static void startEnemyPhase(void) {
     gEnemyTime = ENEMY_DURATION;
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
+    gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0;             /* 영혼 물리 리셋 */
     {   /* 턴마다 다른 공격(뼈 기반 패턴 순환). 전체 흐름은 Slice4-5에서 페이즈 디스패처로 */
         static const char* seq[] = {
             "sans_intro", "sans_bonegap1", "sans_bluebone", "sans_bonegap2",
@@ -343,12 +349,17 @@ static void hurtSoul(void) {
 
 /* --- hazards/VM 가 호출하는 game 후크 (game.h 선언) --- */
 void game_get_heart(double* cx, double* cy) { *cx = gSoul.x + SOUL_SIZE / 2.0; *cy = gSoul.y + SOUL_SIZE / 2.0; }
-int  game_heart_moving(void) { return (gSoul.x != gPrevSx) || (gSoul.y != gPrevSy); }
+int  game_heart_moving(void) {
+    if (gSoulMode == 1) return keyDown(VK_LEFT) || keyDown('A') || keyDown(VK_RIGHT) || keyDown('D');
+    return (gSoul.x != gPrevSx) || (gSoul.y != gPrevSy);
+}
 void game_hurt(int dmg, int karma) {
-    (void)karma;
     if (gSoul.invuln > 0.0f) return;
-    gSoul.hp -= dmg; gSoul.invuln = 1.0f;
-    if (gSoul.hp <= 0) { gSoul.hp = 0; gState = ST_GAMEOVER; stopBGM(); }
+    gSoul.hp -= dmg;
+    gKR += karma; if (gKR > 40) gKR = 40;
+    if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
+    gSoul.invuln = 0.4f;
+    if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
 }
 void game_set_heart_mode(int blue) { gSoulMode = blue; }
 void game_teleport_heart(double x, double y) {
@@ -407,16 +418,49 @@ static void updateEnemyPhase(float dt) {
     if (keyDown(VK_RIGHT) || keyDown('D')) dx += 1.0f;
     if (keyDown(VK_UP)    || keyDown('W')) dy -= 1.0f;
     if (keyDown(VK_DOWN)  || keyDown('S')) dy += 1.0f;
-    gSoul.x += dx * speed * dt;
-    gSoul.y += dy * speed * dt;
     if (gSoul.invuln > 0.0f) gSoul.invuln -= dt;
 
     if (gUseVM) {
-        /* gBox 경계 클램프 */
-        if (gSoul.x < gBox.x + 2)                      gSoul.x = (float)(gBox.x + 2);
-        if (gSoul.y < gBox.y + 2)                      gSoul.y = (float)(gBox.y + 2);
-        if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
-        if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
+        if (gSoulMode == 1) {
+            /* === 파란 영혼: 중력+점프 (각도 90=아래) === */
+            float floorY = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
+            int   up = keyDown(VK_UP) || keyDown('W');
+            int   grounded;
+            double ptopY = 0;
+            float lat = 0.0f, g;
+            if (keyDown(VK_LEFT)  || keyDown('A')) lat -= 1.0f;
+            if (keyDown(VK_RIGHT) || keyDown('D')) lat += 1.0f;
+            gVx = lat * 150.0f;
+            grounded = (gSoul.y >= floorY - 1.0f) ||
+                       (gVy >= 0 && haz_is_solid(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE, 3, &ptopY) &&
+                        gSoul.y + SOUL_SIZE <= ptopY + 8);
+            if (!grounded) {                                  /* 가변 중력 밴드 */
+                if (gVy > 240.0f) g = 540.0f; else if (gVy > 15.0f) g = 180.0f;
+                else if (gVy > -30.0f) g = 450.0f; else g = 180.0f;
+                gVy += g * dt;
+            }
+            if (gVy >  (float)gMaxFall) gVy =  (float)gMaxFall;
+            if (gVy < -(float)gMaxFall) gVy = -(float)gMaxFall;
+            if (up && !gPrevUp && grounded) gVy = -180.0f;    /* 점프 임펄스 */
+            if (!up && gVy < -30.0f) gVy = -30.0f;            /* 가변 점프컷(짧은 점프) */
+            gPrevUp = up;
+            gSoul.x += gVx * dt;
+            gSoul.y += gVy * dt;
+            if (gSoul.x < gBox.x + 2) gSoul.x = (float)(gBox.x + 2);
+            if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
+            if (gVy >= 0 && haz_is_solid(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE, 4, &ptopY) &&
+                gSoul.y + SOUL_SIZE <= ptopY + 10) { gSoul.y = (float)(ptopY - SOUL_SIZE); gVy = 0.0f; }
+            if (gSoul.y >= floorY) { gSoul.y = floorY; gVy = 0.0f; }
+            if (gSoul.y < gBox.y + 2) { gSoul.y = (float)(gBox.y + 2); if (gVy < 0.0f) gVy = 0.0f; }
+        } else {
+            /* === 빨간 영혼: 자유 8방향 === */
+            gSoul.x += dx * speed * dt;
+            gSoul.y += dy * speed * dt;
+            if (gSoul.x < gBox.x + 2)                      gSoul.x = (float)(gBox.x + 2);
+            if (gSoul.y < gBox.y + 2)                      gSoul.y = (float)(gBox.y + 2);
+            if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
+            if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
+        }
         vm_step(&gVM, dt);
         haz_update(dt);
         if (gState != ST_BATTLE) return;            /* 피격으로 게임오버됐을 수 있음 */
@@ -427,6 +471,8 @@ static void updateEnemyPhase(float dt) {
     }
 
     /* --- 기존 Slice2 패턴 (VM 로드 실패 시 폴백) --- */
+    gSoul.x += dx * speed * dt;
+    gSoul.y += dy * speed * dt;
     if (gSoul.x < BOX_X + 2)                    gSoul.x = (float)(BOX_X + 2);
     if (gSoul.y < BOX_Y + 2)                    gSoul.y = (float)(BOX_Y + 2);
     if (gSoul.x > BOX_X + BOX_W - 2 - SOUL_SIZE) gSoul.x = (float)(BOX_X + BOX_W - 2 - SOUL_SIZE);
@@ -535,6 +581,14 @@ static void update(float dt) {
                 gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; }
             } else { gBubbleTimer -= dt; if (gBubbleTimer <= 0.0f) gBubbleLen = 0; }
         }
+        if (gKR > 0 && gSoul.hp > 1) {  /* KARMA 드레인 */
+            float iv = gKR >= 40 ? 0.033f : gKR >= 30 ? 0.066f : gKR >= 20 ? 0.166f : gKR >= 10 ? 0.5f : 1.0f;
+            gKR_t += dt;
+            if (gKR_t >= iv) {
+                gKR--; gSoul.hp--; gKR_t = 0.0f;
+                if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
+            }
+        }
         if (gPhase == PH_DIALOGUE) {
             const wchar_t* line = gDialogues[gTurn < DIALOGUE_COUNT ? gTurn : DIALOGUE_COUNT - 1];
             int len = (int)wcslen(line);
@@ -599,6 +653,13 @@ static void drawHpBar(void) {
     drawText(gMemDC, 120, hpy - 1, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
     fillRect(gMemDC, hpx, hpy, hpw, hph, gDkRed);
     fillRect(gMemDC, hpx, hpy, cur, hph, gYellow);
+    if (gKR > 0) {   /* KARMA(보라) — 현재 HP의 오른쪽 끝 일부가 깎일 예정 */
+        static HBRUSH krBr = NULL; int krw;
+        if (!krBr) krBr = CreateSolidBrush(RGB(150, 30, 160));
+        krw = (int)(hpw * (gKR / (float)gSoul.maxHp));
+        if (krw > cur) krw = cur;
+        fillRect(gMemDC, hpx + cur - krw, hpy, krw, hph, krBr);
+    }
     wsprintfW(buf, L"HP %d / %d", gSoul.hp, gSoul.maxHp);
     drawText(gMemDC, hpx + hpw + 12, hpy - 1, buf, RGB(255, 255, 255), gFontSmall);
 }
