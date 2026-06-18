@@ -364,16 +364,15 @@ static const char* chooseAttack(void) {
 }
 /* 메뉴 박스 정보 텍스트(BTS InfoText). HitAttempts·KARMA 기반 플레이버. */
 static const wchar_t* menuInfoText(void) {
-    int ha = gHitAttempts;
+    int ha = gHitAttempts;   /* BTS InfoText: 정확한 HitAttempts 값에만 특수문구, 나머진 기본(죄가 기어오른다) */
     if (ha >= 22) return L"* 샌즈가 특수 공격을 쓸 준비를 한다.";
     if (ha == 21) return L"* 샌즈가 뭔가 준비하고 있다.";
     if (ha == 20) return L"* 샌즈가 정말 지쳐 보이기 시작한다.";
     if (ha == 19) return L"* 이걸 읽는 게 시간을 잘 쓰는 것 같진 않다.";
     if (ha >= 15) return L"* 진짜 전투가 마침내 시작된다.";
-    if (ha >= 13) return L"* 샌즈가 잠시 쉬고 있다.";
-    if (gKR > 0)  return L"* 등 뒤로 죄가 기어오르는 게 느껴진다.";
-    if (ha >= 1)  return L"* 안 좋은 일이 생길 것 같은 기분이 든다.";
-    return L"* 무엇을 할까...";
+    if (ha == 13) return L"* 샌즈가 잠시 쉬고 있다.";
+    if (ha <= 1)  return L"* 안 좋은 일이 생길 것 같은 기분이 든다.";
+    return L"* 등 뒤로 죄가 기어오르는 게 느껴진다.";   /* BTS 기본 플레이버(제노사이드) */
 }
 /* 엔딩 시퀀스: 탄막 정리 후 마무리 대사 → 승리 */
 static void startEnding(int viaFinal) {
