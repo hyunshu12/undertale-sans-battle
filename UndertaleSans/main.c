@@ -71,12 +71,11 @@
 #define SANS_HEAD_W 64
 #define SANS_HEAD_H 60
 
-/* 메뉴 버튼 배치 */
+/* 메뉴 버튼 배치 (BTS 정확 좌표: x 32/184/344/496, y432, 110x42) */
 #define BTN_W 110
 #define BTN_H 42
-#define BTN_Y 428
-#define BTN_STEP 124
-#define BTN_X0 79
+#define BTN_Y 432
+static const int gMenuBtnX[4] = { 32, 184, 344, 496 };
 
 /* ---------------- 구조체 ([구현조건: 구조체]) ---------------- */
 typedef enum { ST_TITLE, ST_DIFFICULTY, ST_BATTLE, ST_GAMEOVER, ST_WIN } GameState;
@@ -528,7 +527,7 @@ void game_draw_blaster(HDC dc, double cx, double cy, double ang, int size, int f
         FillRect(dc, &r, gWhite); return;
     }
     {
-        double sc = (size == 2 ? 1.5 : 1.0);
+        double sc = (size == 0 ? 0.5 : size == 1 ? 1.0 : 1.5);   /* BTS strip Scale */
         int w = (int)(s->w * sc), h = (int)(s->h * sc);
         TransparentBlt(dc, (int)cx - w / 2, (int)cy - h / 2, w, h, s->dc, 0, 0, s->w, s->h, RGB(255, 0, 255));
     }
@@ -931,7 +930,7 @@ static void drawSans(void) {
     }
 }
 static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
-    int x = BTN_X0 + idx * BTN_STEP;
+    int x = gMenuBtnX[idx];
     if (s->ok) drawSprite(s, x, BTN_Y);
     else { fillRect(gMemDC, x, BTN_Y, BTN_W, BTN_H, gDkRed); drawText(gMemDC, x + 14, BTN_Y + 10, label, RGB(255, 160, 0), gFontSmall); }
     if (gPhase == PH_MENU && gMenuIndex == idx) {
