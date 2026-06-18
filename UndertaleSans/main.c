@@ -900,7 +900,7 @@ static void update(float dt) {
                 else {                                            /* 다음 대사 / 큐 끝 처리 */
                     gDlgIdx++;
                     if (gDlgIdx >= gDlgN) {
-                        if (gDlgAfter == 1) { gState = ST_WIN; stopBGM(); }
+                        if (gDlgAfter == 1) { gState = ST_TITLE; stopBGM(); }  /* BTS: 승리 2줄 후 곧바로 메인메뉴(타이틀)로 */
                         else startEnemyPhase();
                     } else { gTypePos = 0.0f; }
                 }
