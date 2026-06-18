@@ -164,7 +164,6 @@ static int    gSansAnimMode = 0;         /* 0=Idle 1=HeadBob 2=Tired (호흡) */
 static float  gSansAnimT = 0.0f;         /* 호흡 누적 시간 */
 static int    gSansSweat = 0;            /* SansSweat 땀(0=숨김) */
 static int    gGravDir = 1;              /* 파란 영혼 중력 방향(0우1하2좌3상). 기본=아래 */
-static int    gSlamDir = -1;             /* SansSlam 진행중 방향(-1=없음). 탄도 비행 */
 static int    gHasFocus = 1;             /* 최적화: 포커스 상태 프레임당 1회 갱신 */
 static HPEN   gMenuPen = NULL;           /* 메뉴 하이라이트 펜(1회 생성, 매프레임 X) */
 
@@ -393,7 +392,7 @@ static void startEnemyPhase(void) {
     gEnemyTime = ENEMY_DURATION;
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
-    gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0; gGravDir = 1; gSlamDir = -1;  /* 영혼 물리 리셋 */
+    gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0; gGravDir = 1;  /* 영혼 물리 리셋 */
     gSansX = SANS_CX; gSansOffsetX = 0.0f; lstrcpyA(gSansHead, "Default"); /* 샌즈 비주얼 리셋 */
     gSansBodyPose = 0; gSansAnimMode = 0; gSansSweat = 0;
     {   /* HitAttempts 기반 공격 선택(INTRO/SPARE/MULTI/FINAL) */
@@ -471,7 +470,7 @@ void game_hurt(int dmg, int karma) {
     gSoul.invuln = 0.034f;   /* BTS: ~1프레임만 무적(좁은 히트박스와 짝). 겹치면 계속 피격 */
     if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
 }
-void game_set_heart_mode(int blue) { gSoulMode = blue; }
+void game_set_heart_mode(int blue) { gSoulMode = blue; if (blue) gGravDir = 1; }  /* 파랑=기본 아래중력 */
 void game_teleport_heart(double x, double y) {
     gSoul.x = (float)(x - SOUL_SIZE / 2.0); gSoul.y = (float)(y - SOUL_SIZE / 2.0);
 }
@@ -501,10 +500,11 @@ void game_sans_slam(int dir) {
     int d = dir & 3;
     double a = (double)(d * 90) * M_PI / 180.0;
     double spd = gMaxFall < 0 ? -gMaxFall : gMaxFall;   /* 슬램 속력(양수) */
-    gSoulMode = 1; gGravDir = d; gSlamDir = d;
+    gSoulMode = 1; gGravDir = d;   /* 중력이 슬램 방향을 따름(방향중력) */
     gVx = (float)(cos(a) * spd);
     gVy = (float)(sin(a) * spd);
     gPrevUp = 1;   /* 슬램 직후 점프 엣지 무시 */
+    game_shake(5.0);
 }
 /* 회전 게이스터 블래스터 스프라이트(8각 사전회전 중 최근접). firing=발사중 */
 void game_draw_blaster(HDC dc, double cx, double cy, double ang, int size, int firing) {
@@ -592,18 +592,8 @@ static void updateEnemyPhase(float dt) {
     if (gSoul.invuln > 0.0f) gSoul.invuln -= dt;
 
     if (gUseVM) {
-        if (gSoulMode == 1 && gSlamDir >= 0) {
-            /* === SansSlam 탄도 비행: 입력/중력 무시하고 dir 방향 벽까지 직진 === */
-            int hit = 0;
-            if (gVx == 0.0f && gVy == 0.0f) { gSlamDir = -1; }   /* 속력0 고착 방지 */
-            gSoul.x += gVx * dt; gSoul.y += gVy * dt;
-            if (gSoul.x < gBox.x + 2)                      { gSoul.x = (float)(gBox.x + 2); hit = 1; }
-            if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) { gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE); hit = 1; }
-            if (gSoul.y < gBox.y + 2)                      { gSoul.y = (float)(gBox.y + 2); hit = 1; }
-            if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) { gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE); hit = 1; }
-            if (hit) { game_shake(8.0); gSlamDir = -1; gVx = 0.0f; gVy = 0.0f; }  /* 충돌→흔들림, 일반 물리 복귀 */
-        } else if (gSoulMode == 1) {
-            /* === 파란 영혼: 중력+점프 (각도 90=아래) === */
+        if (gSoulMode == 1 && gGravDir == 1) {
+            /* === 파란 영혼: 아래 중력+점프 (플랫폼 포함). dir1=down. (down은 기존 그대로) === */
             float floorY = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
             int   up = keyDown(VK_UP) || keyDown('W');
             int   grounded;
@@ -641,6 +631,52 @@ static void updateEnemyPhase(float dt) {
                     if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
                 }
             }
+        } else if (gSoulMode == 1) {
+            /* === 파란 영혼: 방향 중력(dir 0=우/2=좌/3=상). SansSlam 다방향. 플랫폼 없음 === */
+            int gd = gGravDir;
+            float gvx = (gd == 0 ? 1.0f : gd == 2 ? -1.0f : 0.0f);   /* 중력 단위(벽 방향) */
+            float gvy = (gd == 1 ? 1.0f : gd == 3 ? -1.0f : 0.0f);
+            float lvx = gvy, lvy = -gvx;   /* 횡(중력 수직) 단위 */
+            int kL = keyDown(VK_LEFT) || keyDown('A');
+            int kR = keyDown(VK_RIGHT) || keyDown('D');
+            int kU = keyDown(VK_UP) || keyDown('W');
+            int kD = keyDown(VK_DOWN) || keyDown('S');
+            float ix = (kR ? 1.0f : 0.0f) - (kL ? 1.0f : 0.0f);
+            float iy = (kD ? 1.0f : 0.0f) - (kU ? 1.0f : 0.0f);
+            float lat = ix * lvx + iy * lvy;               /* 횡 입력 */
+            int jumpKey = (-(ix * gvx + iy * gvy) > 0.5f); /* 중력 반대로 누름 = 점프 */
+            float fall = gVx * gvx + gVy * gvy;            /* 중력방향 속도 */
+            float latV = lat * speed;
+            float leadX, leadY, soulLead, wallX, wallY, wallPos, g, lv;
+            int grounded;
+            leadX = gSoul.x + (gvx > 0 ? SOUL_SIZE : 0.0f);
+            leadY = gSoul.y + (gvy > 0 ? SOUL_SIZE : 0.0f);
+            soulLead = leadX * gvx + leadY * gvy;
+            wallX = (float)(gvx > 0 ? gBox.x + gBox.w - 2 : gvx < 0 ? gBox.x + 2 : 0);
+            wallY = (float)(gvy > 0 ? gBox.y + gBox.h - 2 : gvy < 0 ? gBox.y + 2 : 0);
+            wallPos = wallX * gvx + wallY * gvy;
+            grounded = (soulLead >= wallPos - 1.0f);
+            if (!grounded) {                                /* 가변 중력 밴드(아래와 동일) */
+                if (fall > 240.0f) g = 540.0f; else if (fall > 15.0f) g = 180.0f;
+                else if (fall > -30.0f) g = 450.0f; else g = 180.0f;
+                fall += g * dt;
+            }
+            if (fall >  (float)gMaxFall) fall =  (float)gMaxFall;
+            if (fall < -(float)gMaxFall) fall = -(float)gMaxFall;
+            if (jumpKey && !gPrevUp && grounded) fall = -180.0f;
+            if (!jumpKey && fall < -30.0f) fall = -30.0f;
+            gPrevUp = jumpKey;
+            gVx = latV * lvx + fall * gvx;
+            gVy = latV * lvy + fall * gvy;
+            gSoul.x += gVx * dt; gSoul.y += gVy * dt;
+            if (gSoul.x < gBox.x + 2) gSoul.x = (float)(gBox.x + 2);
+            if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
+            if (gSoul.y < gBox.y + 2) gSoul.y = (float)(gBox.y + 2);
+            if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
+            leadX = gSoul.x + (gvx > 0 ? SOUL_SIZE : 0.0f);   /* 벽 도달 시 중력속도 0 */
+            leadY = gSoul.y + (gvy > 0 ? SOUL_SIZE : 0.0f);
+            soulLead = leadX * gvx + leadY * gvy;
+            if (soulLead >= wallPos - 0.5f) { lv = gVx * lvx + gVy * lvy; gVx = lv * lvx; gVy = lv * lvy; }
         } else {
             /* === 빨간 영혼: 자유 8방향 === */
             gSoul.x += dx * speed * dt;
