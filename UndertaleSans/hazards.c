@@ -44,7 +44,7 @@ static float czL, czT, czR, czB;       /* 목표 */
 static int   czActive = 0, czResume = 0;
 static float czSpeed = 480.0f;
 
-static HBRUSH brWhite = NULL, brBlue = NULL, brOrange = NULL, brCyan = NULL;
+static HBRUSH brWhite = NULL, brBlue = NULL, brOrange = NULL, brCyan = NULL, brGlow = NULL;
 
 static void ensure_brushes(void) {
     if (!brWhite) {
@@ -52,6 +52,7 @@ static void ensure_brushes(void) {
         brBlue   = CreateSolidBrush(RGB(20, 169, 255));   /* BTS 파란뼈 #14A9FF */
         brOrange = CreateSolidBrush(RGB(255, 160, 64));   /* BTS 주황뼈 #FFA040 */
         brCyan   = CreateSolidBrush(RGB(0, 220, 255));
+        brGlow   = CreateSolidBrush(RGB(110, 110, 120));  /* 빔 외곽 글로우(흐린 흰) */
     }
 }
 
@@ -61,6 +62,7 @@ void haz_free(void) {
     if (brBlue)   { DeleteObject(brBlue);   brBlue   = NULL; }
     if (brOrange) { DeleteObject(brOrange); brOrange = NULL; }
     if (brCyan)   { DeleteObject(brCyan);   brCyan   = NULL; }
+    if (brGlow)   { DeleteObject(brGlow);   brGlow   = NULL; }
 }
 void haz_set_vm(VM* vm) { g_vm = vm; }
 void haz_reset(void) {
@@ -422,8 +424,9 @@ void haz_render(HDC dc) {
         HBlaster* b = &blasters[i];
         if (!b->active) continue;
         if (b->state >= 2 && b->baseSize > 1) {
-            /* BTS: 단색 흰 빔(시안 없음) + SineSize 두께 진동. 입구 글로우. */
+            /* BTS: 흰 빔 + SineSize 두께 진동. 외곽 흐린 글로우 + 흰 코어. */
             float sine = sinf(b->beamTimer * 20.0f) * b->baseSize / 4.0f;
+            draw_beam(dc, b->x, b->y, b->ang, 1000, (b->baseSize + sine) * 1.35f, brGlow);
             draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize + sine, brWhite);
         }
         /* 머리: 회전 게이스터 블래스터 스프라이트(발사중=Fire) */
