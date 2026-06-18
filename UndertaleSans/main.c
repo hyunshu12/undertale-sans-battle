@@ -150,6 +150,7 @@ static int    gPrevUp = 0;              /* 점프키 엣지 검출 */
 static int    gKR = 0;                  /* KARMA(누적 카르마 데미지) */
 static float  gKR_t = 0.0f;
 static float  gSndHurtT = 0.0f;         /* 피격음 스로틀(연속피격시 소리 도배 방지) */
+static float  gKarmaStreak = 0.0f;      /* 연속피격 카르마 캡(BTS: 지속접촉시 카르마 2로 제한) */
 
 /* --- 전투 흐름(HitAttempts) / 샌즈 회피 / 대사 큐 --- */
 static int    gHitAttempts = 0;          /* FIGHT(샌즈 회피) 성공 횟수 → 공격 선택 */
@@ -219,7 +220,7 @@ static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (fl
 static float diffInvuln(void)  { return gDifficulty == 0 ? 0.4f : 0.034f; }     /* NORMAL/HARD=BTS 1프레임 */
 static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY만 카르마 절반 */
 static int   diffItems(void)   { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 3 : 2; }
-static int   diffMercyHA(void) { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 13 : 22; } /* NORMAL=스페어(13) */
+static int   diffMercyHA(void) { return gDifficulty == 0 ? 5 : 99; }  /* BTS=조기 자비승 없음. EASY만 HA5 접근성 */
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
                         float bx, float by, float bw, float bh) {
@@ -474,6 +475,8 @@ void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
     gSoul.hp -= dmg;
     if (gSndHurtT <= 0.0f) { game_play_sound("PlayerDamaged"); gSndHurtT = 0.15f; }  /* 소리 스로틀 */
+    if (gKarmaStreak > 0.0f && karma > 2) karma = 2;   /* BTS: 지속접촉 카르마 캡 2 */
+    gKarmaStreak = 0.12f;
     gKR += diffKarma(karma); if (gKR > 40) gKR = 40;
     if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
     gSoul.invuln = diffInvuln();   /* 난이도별 무적시간(HARD=BTS 0.034s) */
@@ -508,7 +511,7 @@ void game_sans_x(int x) { gSansX = x; }
 void game_sans_slam(int dir) {
     int d = dir & 3;
     double a = (double)(d * 90) * M_PI / 180.0;
-    double spd = gMaxFall < 0 ? -gMaxFall : gMaxFall;   /* 슬램 속력(양수) */
+    double spd = gMaxFall;   /* BTS: 부호 있는 MaxFallSpeed 그대로 */
     gSoulMode = 1; gGravDir = d;   /* 중력이 슬램 방향을 따름(방향중력) */
     gVx = (float)(cos(a) * spd);
     gVy = (float)(sin(a) * spd);
@@ -619,8 +622,8 @@ static void updateEnemyPhase(float dt) {
                 else if (gVy > -30.0f) g = 450.0f; else g = 180.0f;
                 gVy += g * dt;
             }
-            if (gVy >  (float)gMaxFall) gVy =  (float)gMaxFall;
-            if (gVy < -(float)gMaxFall) gVy = -(float)gMaxFall;
+            if (gMaxFall >= 0) { if (gVy > (float)gMaxFall) gVy = (float)gMaxFall; }  /* BTS: 단방향 부호 클램프 */
+            else               { if (gVy < (float)gMaxFall) gVy = (float)gMaxFall; }  /* 음수=역중력 드리프트 */
             if (up && !gPrevUp && grounded) gVy = -180.0f;    /* 점프 임펄스 */
             if (!up && gVy < -30.0f) gVy = -30.0f;            /* 가변 점프컷(짧은 점프) */
             gPrevUp = up;
@@ -670,8 +673,8 @@ static void updateEnemyPhase(float dt) {
                 else if (fall > -30.0f) g = 450.0f; else g = 180.0f;
                 fall += g * dt;
             }
-            if (fall >  (float)gMaxFall) fall =  (float)gMaxFall;
-            if (fall < -(float)gMaxFall) fall = -(float)gMaxFall;
+            if (gMaxFall >= 0) { if (fall > (float)gMaxFall) fall = (float)gMaxFall; }  /* BTS 단방향 부호 클램프 */
+            else               { if (fall < (float)gMaxFall) fall = (float)gMaxFall; }
             if (jumpKey && !gPrevUp && grounded) fall = -180.0f;
             if (!jumpKey && fall < -30.0f) fall = -30.0f;
             gPrevUp = jumpKey;
@@ -792,6 +795,7 @@ static void update(float dt) {
     gMenacePulse += dt;
     gSansAnimT += dt; if (gSansAnimT > 1000.0f) gSansAnimT = 0.0f;   /* 호흡 누적 */
     if (gSndHurtT > 0.0f) gSndHurtT -= dt;
+    if (gKarmaStreak > 0.0f) gKarmaStreak -= dt;
 
     /* 화면 흔들림 감쇠 */
     if (gShakeI > 0.0f) {

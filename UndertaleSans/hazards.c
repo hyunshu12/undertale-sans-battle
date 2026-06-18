@@ -380,15 +380,22 @@ static void draw_beam(HDC dc, double bx, double by, double ang, double len, doub
 }
 
 /* 언더테일 뼈 = 둥근 캡(캡슐) 모양. RoundRect로 끝을 반원 처리(길이 무관 깔끔). */
+static void fill_rc(HDC dc, int l, int t, int r, int b, HBRUSH br) { RECT rr; rr.left = l; rr.top = t; rr.right = r; rr.bottom = b; FillRect(dc, &rr, br); }
+/* BTS 뼈 모양: 얇은 shaft(폭 ~60%) + 양끝 풀폭 캡(아령/I빔). 텍스처 BoneV(shaft6/cap10) 기준. */
 static void fill_capsule(HDC dc, float fx, float fy, float fw, float fh, HBRUSH br) {
     int x = (int)fx, y = (int)fy, w = (int)fw, h = (int)fh;
-    int rad = (w < h ? w : h);   /* 캡 지름 = 짧은 변 → 완전 둥근 끝 */
-    HBRUSH ob; HPEN op;
-    if (w < 3 || h < 3) { RECT rr; rr.left = x; rr.top = y; rr.right = x + w; rr.bottom = y + h; FillRect(dc, &rr, br); return; }
-    ob = (HBRUSH)SelectObject(dc, br);
-    op = (HPEN)SelectObject(dc, GetStockObject(NULL_PEN));
-    RoundRect(dc, x, y, x + w + 1, y + h + 1, rad, rad);   /* +1: NULL_PEN 1px 보정 */
-    SelectObject(dc, op); SelectObject(dc, ob);
+    if (w < 5 || h < 5) { fill_rc(dc, x, y, x + w, y + h, br); return; }
+    if (h >= w) {   /* 세로 뼈 */
+        int sh = w * 3 / 5; int sx = x + (w - sh) / 2; int cap = w / 2; if (cap > 6) cap = 6;
+        fill_rc(dc, sx, y, sx + sh, y + h, br);            /* shaft */
+        fill_rc(dc, x, y, x + w, y + cap, br);             /* 위 캡 */
+        fill_rc(dc, x, y + h - cap, x + w, y + h, br);     /* 아래 캡 */
+    } else {        /* 가로 뼈 */
+        int sw = h * 3 / 5; int sy = y + (h - sw) / 2; int cap = h / 2; if (cap > 6) cap = 6;
+        fill_rc(dc, x, sy, x + w, sy + sw, br);            /* shaft */
+        fill_rc(dc, x, y, x + cap, y + h, br);             /* 좌 캡 */
+        fill_rc(dc, x + w - cap, y, x + w, y + h, br);     /* 우 캡 */
+    }
 }
 
 void haz_render(HDC dc) {
