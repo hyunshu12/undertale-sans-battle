@@ -137,7 +137,7 @@ static VMHost gHost;
 static int    gUseVM = 0;       /* 1=VM 공격 구동중, 0=Slice2 패턴 폴백 */
 static int    gSoulMode = 0;    /* 0=빨강,1=파랑(BLUE 물리는 Slice4) */
 static int    gAttackEnded = 0;
-static float  gPrevSx = 0.0f, gPrevSy = 0.0f;
+static int    gHeartMoving = 0;          /* BTS "Is moving"(속도/입력 기반) */
 static int    gDebug = 0;       /* F1 디버그 오버레이 */
 static char   gAtkName[32] = "";
 static int    gAtkIndex = 0;    /* 공격 시퀀스 인덱스 */
@@ -495,10 +495,9 @@ static void hurtSoul(void) {
 /* --- hazards/VM 가 호출하는 game 후크 (game.h 선언) --- */
 void game_get_heart(double* cx, double* cy) { *cx = gSoul.x + SOUL_SIZE / 2.0; *cy = gSoul.y + SOUL_SIZE / 2.0; }
 int  game_heart_moving(void) {
-    /* BTS: 실제 위치 변화(속도≠0)로 판정 — 두 모드 공통. 파랑모드도 점프/낙하 포함.
-       (착지·정지 시 속도0 → 파란뼈 통과, 이동/점프 시 → 파란뼈 피격) */
-    float dx = gSoul.x - gPrevSx, dy = gSoul.y - gPrevSy;
-    return (dx > 0.05f || dx < -0.05f || dy > 0.05f || dy < -0.05f);
+    /* BTS CustomMovement "Is moving" = 속도≠0(입력 의도) — 위치변화 아님.
+       → 벽에 붙어 눌러도 '이동'(파란뼈 피격). updateEnemyPhase에서 매프레임 계산. */
+    return gHeartMoving;
 }
 void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
@@ -640,8 +639,6 @@ static void updateEnemyPhase(float dt) {
     float speed = (keyDown(VK_SHIFT) || keyDown(VK_LCONTROL)) ? 75.0f : 150.0f;
     int i;
 
-    gPrevSx = gSoul.x; gPrevSy = gSoul.y;   /* 이동 판정용 직전 위치 */
-
     /* 영혼 이동 [구현조건: 키보드입력] */
     if (keyDown(VK_LEFT)  || keyDown('A')) dx -= 1.0f;
     if (keyDown(VK_RIGHT) || keyDown('D')) dx += 1.0f;
@@ -748,6 +745,9 @@ static void updateEnemyPhase(float dt) {
             if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
             if (gSoul.y > gBox.y + gBox.h - 2 - SOUL_SIZE) gSoul.y = (float)(gBox.y + gBox.h - 2 - SOUL_SIZE);
         }
+        /* BTS "Is moving"(속도≠0): RED=입력의도, BLUE=속도(벽에 눌러도 이동·낙하도 이동) */
+        gHeartMoving = (gSoulMode == 0) ? (dx != 0.0f || dy != 0.0f)
+                       : (gVx > 0.5f || gVx < -0.5f || gVy > 0.5f || gVy < -0.5f);
         vm_step(&gVM, dt);
         haz_update(dt);
         if (gState != ST_BATTLE) return;            /* 피격으로 게임오버됐을 수 있음 */
