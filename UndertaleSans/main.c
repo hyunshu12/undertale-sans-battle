@@ -811,8 +811,7 @@ static void update(float dt) {
     case ST_DIFFICULTY:
         if (lPressed && gDiffSel > 0) gDiffSel--;
         if (rPressed && gDiffSel < 2) gDiffSel++;
-        if (keyDown(VK_ESCAPE)) { gState = ST_TITLE; }
-        if (zPressed) { gDifficulty = gDiffSel; startBattle(); }   /* 확정 → 전투 */
+        if (zPressed) { gDifficulty = gDiffSel; startBattle(); }   /* 확정 → 전투 (ESC는 전역 종료) */
         break;
     case ST_BATTLE:
         if (gBubbleLen > 0) {           /* 샌즈 말풍선 타이핑/표시 */
@@ -1004,7 +1003,7 @@ static void render(void) {
             drawTextCentered(bx + bw / 2, by + 16, names[i], col, gFontSmall);
         }
         drawTextWrapped(60, 300, CLIENT_W - 120, 60, desc[gDiffSel], RGB(255, 255, 255), gFontSmall);
-        drawTextCentered(CLIENT_W / 2, 372, L"← → 선택    Z 확인    ESC 뒤로", RGB(160, 160, 160), gFontTiny);
+        drawTextCentered(CLIENT_W / 2, 372, L"← → 선택    Z 확인", RGB(160, 160, 160), gFontTiny);
         return;
     }
     if (gState == ST_GAMEOVER) {
