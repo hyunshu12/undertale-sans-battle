@@ -213,6 +213,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
     if (strcmp(cmd, "SansHead") == 0)   { game_sans_head(a[0]); return; }   /* 표정 */
     if (strcmp(cmd, "SansBody") == 0)   { game_sans_body(a[0]); return; }   /* 팔 포즈 */
     if (strcmp(cmd, "SansAnimation") == 0) { game_sans_animation(a[0]); return; } /* 호흡 */
+    if (strcmp(cmd, "SansSweat") == 0)  { game_sans_sweat((int)argf(a, argc, 0)); return; } /* 땀 */
     if (strcmp(cmd, "SansX") == 0)      { game_sans_x((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "Sound") == 0)      { game_play_sound(a[0]); return; }
     if (strcmp(cmd, "BlackScreen") == 0){ game_set_blackscreen((int)argf(a, argc, 0)); return; }

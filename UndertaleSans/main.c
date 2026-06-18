@@ -146,6 +146,7 @@ static float  gVx = 0.0f, gVy = 0.0f;   /* 파란 영혼 속도(px/s) */
 static int    gPrevUp = 0;              /* 점프키 엣지 검출 */
 static int    gKR = 0;                  /* KARMA(누적 카르마 데미지) */
 static float  gKR_t = 0.0f;
+static float  gSndHurtT = 0.0f;         /* 피격음 스로틀(연속피격시 소리 도배 방지) */
 
 /* --- 전투 흐름(HitAttempts) / 샌즈 회피 / 대사 큐 --- */
 static int    gHitAttempts = 0;          /* FIGHT(샌즈 회피) 성공 횟수 → 공격 선택 */
@@ -161,6 +162,7 @@ static char   gSansHead[16] = "Default"; /* 현재 머리 표정 */
 static int    gSansBodyPose = 0;         /* 0=레이어(다리+몸통+머리), 1=Down 2=Up 3=Left 4=Right */
 static int    gSansAnimMode = 0;         /* 0=Idle 1=HeadBob 2=Tired (호흡) */
 static float  gSansAnimT = 0.0f;         /* 호흡 누적 시간 */
+static int    gSansSweat = 0;            /* SansSweat 땀(0=숨김) */
 static int    gGravDir = 1;              /* 파란 영혼 중력 방향(0우1하2좌3상). 기본=아래 */
 static int    gSlamDir = -1;             /* SansSlam 진행중 방향(-1=없음). 탄도 비행 */
 static int    gHasFocus = 1;             /* 최적화: 포커스 상태 프레임당 1회 갱신 */
@@ -393,7 +395,7 @@ static void startEnemyPhase(void) {
     gAttackEnded = 0;
     gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0; gGravDir = 1; gSlamDir = -1;  /* 영혼 물리 리셋 */
     gSansX = SANS_CX; gSansOffsetX = 0.0f; lstrcpyA(gSansHead, "Default"); /* 샌즈 비주얼 리셋 */
-    gSansBodyPose = 0; gSansAnimMode = 0;
+    gSansBodyPose = 0; gSansAnimMode = 0; gSansSweat = 0;
     {   /* HitAttempts 기반 공격 선택(INTRO/SPARE/MULTI/FINAL) */
         const char* atk = chooseAttack();
         strncpy(gCurAtk, atk, 31); gCurAtk[31] = 0;
@@ -463,10 +465,10 @@ int  game_heart_moving(void) {
 void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
     gSoul.hp -= dmg;
-    game_play_sound("PlayerDamaged");
+    if (gSndHurtT <= 0.0f) { game_play_sound("PlayerDamaged"); gSndHurtT = 0.15f; }  /* 소리 스로틀 */
     gKR += karma; if (gKR > 40) gKR = 40;
     if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
-    gSoul.invuln = 0.4f;
+    gSoul.invuln = 0.034f;   /* BTS: ~1프레임만 무적(좁은 히트박스와 짝). 겹치면 계속 피격 */
     if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
 }
 void game_set_heart_mode(int blue) { gSoulMode = blue; }
@@ -492,6 +494,7 @@ void game_sans_animation(const char* name) {   /* 호흡 모드(레이어 복귀
     else if (name && strcmp(name, "Tired") == 0) gSansAnimMode = 2;
     else                                         gSansAnimMode = 0;
 }
+void game_sans_sweat(int n) { gSansSweat = n; }
 void game_sans_x(int x) { gSansX = x; }
 /* SansSlam: 영혼을 dir 방향(0우1하2좌3상)으로 MaxFallSpeed 속도로 벽까지 내리꽂기(탄도) */
 void game_sans_slam(int dir) {
@@ -575,7 +578,8 @@ static int RunAttack(const char* name) {
 
 static void updateEnemyPhase(float dt) {
     float dx = 0.0f, dy = 0.0f;
-    const float speed = 160.0f;
+    /* BTS: 기본 150px/s, Shift(집중) 누르면 75px/s 정밀이동 */
+    float speed = (keyDown(VK_SHIFT) || keyDown(VK_LCONTROL)) ? 75.0f : 150.0f;
     int i;
 
     gPrevSx = gSoul.x; gPrevSy = gSoul.y;   /* 이동 판정용 직전 위치 */
@@ -607,7 +611,7 @@ static void updateEnemyPhase(float dt) {
             float lat = 0.0f, g;
             if (keyDown(VK_LEFT)  || keyDown('A')) lat -= 1.0f;
             if (keyDown(VK_RIGHT) || keyDown('D')) lat += 1.0f;
-            gVx = lat * 150.0f;
+            gVx = lat * speed;   /* 파랑 횡이동도 집중 시 75 */
             grounded = (gSoul.y >= floorY - 1.0f) ||
                        (gVy >= 0 && haz_is_solid(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE, 3, &ptopY) &&
                         gSoul.y + SOUL_SIZE <= ptopY + 8);
@@ -742,6 +746,7 @@ static void update(float dt) {
 
     gMenacePulse += dt;
     gSansAnimT += dt; if (gSansAnimT > 1000.0f) gSansAnimT = 0.0f;   /* 호흡 누적 */
+    if (gSndHurtT > 0.0f) gSndHurtT -= dt;
 
     /* 화면 흔들림 감쇠 */
     if (gShakeI > 0.0f) {
@@ -852,6 +857,7 @@ static void drawSans(void) {
             int by = (gSansBodyPose <= 2) ? SANS_FEET - 140 : SANS_FEET - 96;
             drawSpriteMag(body, bx, by);
             drawSpriteMag(head, cx - SANS_HEAD_W / 2, 140 - SANS_HEAD_H);   /* 머리 바닥 y140 */
+            if (gSansSweat > 0) drawSpriteMag(&gSprSweat, cx - 32, 72);
             return;
         }
     }
@@ -859,6 +865,7 @@ static void drawSans(void) {
         drawSpriteMag(&gSprLegs,  cx - 42, SANS_FEET - SANS_LEGS_H);                  /* (cx-42,178) */
         drawSpriteMag(&gSprTorso, cx - SANS_TORSO_W / 2 + tox, 178 - SANS_TORSO_H + toy); /* (cx-54,128) */
         drawSpriteMag(head,       cx - SANS_HEAD_W / 2 + hox, 140 - SANS_HEAD_H + hoy);   /* (cx-32, 80) */
+        if (gSansSweat > 0) drawSpriteMag(&gSprSweat, cx - 32 + hox, 72 + hoy);
         return;
     }
     /* 폴백: GDI 해골+몸통 박스 */
