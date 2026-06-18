@@ -30,6 +30,7 @@ void game_sans_animation(const char* name);    /* SansAnimation 호흡(Idle/Head
 void game_sans_sweat(int n);                    /* SansSweat 땀방울(0=숨김) */
 void game_sans_x(int x);                        /* SansX 가로 위치(기본 320) */
 void game_sans_slam(int dir);                   /* SansSlam: 영혼을 dir(0우1하2좌3상) 방향으로 내리꽂기 */
+void game_slam_damage(int on);                  /* SansSlamDamage: 벽충돌 데미지 on/off */
 void game_draw_blaster(HDC dc, double cx, double cy, double ang, int size, int firing); /* 회전 블래스터 스프라이트 */
 
 /* --- hazards.c API --- */

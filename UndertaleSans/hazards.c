@@ -212,6 +212,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
         return;
     }
     if (strcmp(cmd, "SansSlam") == 0)   { game_sans_slam((int)argf(a, argc, 0)); return; } /* dir 방향 내리꽂기 */
+    if (strcmp(cmd, "SansSlamDamage") == 0) { game_slam_damage((int)argf(a, argc, 0)); return; } /* 벽충돌 데미지 토글 */
     if (strcmp(cmd, "SansHead") == 0)   { game_sans_head(a[0]); return; }   /* 표정 */
     if (strcmp(cmd, "SansBody") == 0)   { game_sans_body(a[0]); return; }   /* 팔 포즈 */
     if (strcmp(cmd, "SansAnimation") == 0) { game_sans_animation(a[0]); return; } /* 호흡 */
@@ -221,7 +222,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
     if (strcmp(cmd, "BlackScreen") == 0){ game_set_blackscreen((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "SansText") == 0)   { game_sans_text(a[0]); return; }
     if (strcmp(cmd, "EndAttack") == 0)  { game_end_attack(); return; }
-    /* SansTorso/SansAnimation/SansSweat/SansRepeat/SansSlamDamage 등 잔여는 무시(Push2). */
+    /* SansTorso/SansRepeat/SansEndRepeat = 샌즈 애니/몸통 — 기본값과 동일하게 동작하므로 무시(시각 무영향). */
 }
 
 /* ---- 충돌 헬퍼 ----

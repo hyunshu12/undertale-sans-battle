@@ -142,6 +142,8 @@ static int    gDebug = 0;       /* F1 디버그 오버레이 */
 static char   gAtkName[32] = "";
 static int    gAtkIndex = 0;    /* 공격 시퀀스 인덱스 */
 static double gMaxFall = 750.0; /* HeartMaxFallSpeed (BLUE 물리는 다음 푸시) */
+static int    gSlamDamage = 0;  /* SansSlamDamage: 벽 충돌 시 1뎀(비치명) — sans_final */
+static int    gSlammed = 0;     /* SansSlam으로 발사된 직후(첫 벽충돌에서 해제) */
 static int    gBlackScreen = 0;
 static float  gShakeI = 0.0f, gShakeT = 0.0f;
 static int    gShakeDx = 0, gShakeDy = 0;
@@ -412,6 +414,7 @@ static void startEnemyPhase(void) {
     gBox.x = BOX_X; gBox.y = BOX_Y; gBox.w = BOX_W; gBox.h = BOX_H;  /* 박스 기본값 리셋 */
     gAttackEnded = 0;
     gSoulMode = 0; gVx = 0.0f; gVy = 0.0f; gPrevUp = 0; gGravDir = 1;  /* 영혼 물리 리셋 */
+    gSlammed = 0; gSlamDamage = 0;   /* 슬램 상태 리셋(공격 간 누수 방지) */
     gSansX = SANS_CX; gSansOffsetX = 0.0f; lstrcpyA(gSansHead, "Default"); /* 샌즈 비주얼 리셋 */
     gSansBodyPose = 0; gSansAnimMode = 0; gSansSweat = 0;
     {   /* HitAttempts 기반 공격 선택(INTRO/SPARE/MULTI/FINAL) */
@@ -533,7 +536,24 @@ void game_sans_slam(int dir) {
     gVx = (float)(cos(a) * spd);
     gVy = (float)(sin(a) * spd);
     gPrevUp = 1;   /* 슬램 직후 점프 엣지 무시 */
+    gSlammed = 1;  /* BTS: Slammed=1 → 첫 벽충돌에서 효과음/흔들림(+SlamDamage 시 1뎀) */
     game_shake(5.0);
+}
+void game_slam_damage(int on) { gSlamDamage = (on != 0); }   /* BTS SansSlamDamage */
+/* 슬램된 영혼이 벽에 충돌한 순간(첫 1회). speed=충돌 직전 중력방향 속도. */
+static void slamImpact(float speed) {
+    float s;
+    if (!gSlammed) return;
+    gSlammed = 0;
+    s = speed < 0 ? -speed : speed;
+    if (s > 330.0f) {   /* BTS: |속도|>330 강충돌 → Slam음 + 흔들림(floor(s/30/3)) */
+        game_play_sound("Slam");
+        game_shake((double)((int)(s / 30.0f / 3.0f)));
+    }
+    if (gSlamDamage && gSoul.hp > 1) {   /* BTS: SlamDamage 켜짐 & HP>1 → 1뎀(비치명) */
+        gSoul.hp -= 1;
+        game_play_sound("PlayerDamaged");
+    }
 }
 /* 회전 게이스터 블래스터 스프라이트(8각 사전회전 중 최근접). firing=발사중 */
 void game_draw_blaster(HDC dc, double cx, double cy, double ang, int size, int firing) {
@@ -650,7 +670,7 @@ static void updateEnemyPhase(float dt) {
             if (gSoul.x > gBox.x + gBox.w - 2 - SOUL_SIZE) gSoul.x = (float)(gBox.x + gBox.w - 2 - SOUL_SIZE);
             if (gVy >= 0 && haz_is_solid(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE, 4, &ptopY) &&
                 gSoul.y + SOUL_SIZE <= ptopY + 10) { gSoul.y = (float)(ptopY - SOUL_SIZE); gVy = 0.0f; }
-            if (gSoul.y >= floorY) { gSoul.y = floorY; gVy = 0.0f; }
+            if (gSoul.y >= floorY) { slamImpact(gVy); gSoul.y = floorY; gVy = 0.0f; }
             if (gSoul.y < gBox.y + 2) { gSoul.y = (float)(gBox.y + 2); if (gVy < 0.0f) gVy = 0.0f; }
             if (gVy == 0.0f) {   /* 이동 플랫폼 위에 서면 함께 끌려감(착지 물리) */
                 double pvx = haz_platform_vx(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE);
@@ -705,7 +725,7 @@ static void updateEnemyPhase(float dt) {
             leadX = gSoul.x + (gvx > 0 ? SOUL_SIZE : 0.0f);   /* 벽 도달 시 중력속도 0 */
             leadY = gSoul.y + (gvy > 0 ? SOUL_SIZE : 0.0f);
             soulLead = leadX * gvx + leadY * gvy;
-            if (soulLead >= wallPos - 0.5f) { lv = gVx * lvx + gVy * lvy; gVx = lv * lvx; gVy = lv * lvy; }
+            if (soulLead >= wallPos - 0.5f) { slamImpact(fall); lv = gVx * lvx + gVy * lvy; gVx = lv * lvx; gVy = lv * lvy; }
         } else {
             /* === 빨간 영혼: 자유 8방향 === */
             gSoul.x += dx * speed * dt;
