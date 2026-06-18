@@ -211,7 +211,8 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
     }
     if (strcmp(cmd, "SansSlam") == 0)   { game_sans_slam((int)argf(a, argc, 0)); return; } /* dir 방향 내리꽂기 */
     if (strcmp(cmd, "SansHead") == 0)   { game_sans_head(a[0]); return; }   /* 표정 */
-    if (strcmp(cmd, "SansBody") == 0)   { game_sans_body(a[0]); return; }   /* 팔 포즈(Push2) */
+    if (strcmp(cmd, "SansBody") == 0)   { game_sans_body(a[0]); return; }   /* 팔 포즈 */
+    if (strcmp(cmd, "SansAnimation") == 0) { game_sans_animation(a[0]); return; } /* 호흡 */
     if (strcmp(cmd, "SansX") == 0)      { game_sans_x((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "Sound") == 0)      { game_play_sound(a[0]); return; }
     if (strcmp(cmd, "BlackScreen") == 0){ game_set_blackscreen((int)argf(a, argc, 0)); return; }
@@ -292,21 +293,26 @@ void haz_update(float dt) {
         } else if (b->state == 1) {     /* WAIT */
             b->waitTimer -= dt;
             if (b->waitTimer <= 0) { b->state = 2; b->waitTimer = 0.1f; game_play_sound("GasterBlaster"); }
-        } else if (b->state == 2) {     /* FIRE 짧은 후 빔 */
+        } else if (b->state == 2) {     /* FIRE 짧은 후 빔 발사 */
             b->waitTimer -= dt;
-            if (b->waitTimer <= 0) b->state = 3;
-            /* 빔 진행 */
+            if (b->waitTimer <= 0) {    /* → LEAVE: 빔 본격 + 발사효과음 + 흔들림 */
+                b->state = 3;
+                game_play_sound("GasterBlast");
+                game_shake(5.0);
+            }
         }
         if (b->state >= 2) {            /* 빔 활성(FIRE/LEAVE 동안) */
-            float scale = (b->size == 2 ? 3.0f : 2.0f);
-            float maxH = 35.0f * scale;
+            /* BTS: Size0 maxH35/scale0.5, Size1 70/1.0, Size2 105/1.5 */
+            float maxH  = (b->size == 0 ? 35.0f : b->size == 1 ? 70.0f : 105.0f);
+            float bscale = (b->size == 0 ? 0.5f : b->size == 1 ? 1.0f : 1.5f);
             b->beamTimer += dt;
             if (b->beamTimer < 4.0f / 30.0f) b->baseSize = maxH * (b->beamTimer / (4.0f / 30.0f));
             else b->baseSize = maxH;
-            if (b->beamTimer > b->blastTime + 4.0f / 30.0f)
+            if (b->beamTimer > b->blastTime + 5.0f / 30.0f)   /* 감쇠 시작 */
                 b->baseSize *= (float)pow(0.8, dt * 30);
-            /* 충돌: OBB (소울을 블래스터 기준 -ang 역회전) */
-            if (b->baseSize > 2) {
+            /* 충돌: 블래스터에서 1000 전방 OBB. opacity>80(=blastTime+7/30 전)만 데미지 */
+            (void)bscale;
+            if (b->baseSize > 2 && b->beamTimer < b->blastTime + 7.0f / 30.0f) {
                 double hx, hy, lx, ly, c, s;
                 game_get_heart(&hx, &hy);
                 c = DVX(-b->ang); s = DVY(-b->ang);
@@ -314,11 +320,11 @@ void haz_update(float dt) {
                 ly = (hx - b->x) * s + (hy - b->y) * c;
                 if (lx >= 0 && lx <= 1000 && fabs(ly) <= b->baseSize * 0.375)
                     game_hurt(1, 10);
-            } else if (b->state == 3) { b->active = 0; continue; }
+            }
+            if (b->baseSize <= 2 && b->state == 3) { b->active = 0; continue; }
         }
-        if (b->state == 3) {            /* LEAVE: 후퇴 */
-            b->leaveSpeed += 30 * dt * 30 * dt;  /* +=30/틱 누적 근사 */
-            b->leaveSpeed += 0.5f;
+        if (b->state == 3) {            /* LEAVE: 후퇴(BTS: LeaveSpeed += 30/프레임) */
+            b->leaveSpeed += 1800.0f * dt;   /* +30/프레임 @60fps */
             b->x -= (float)(DVX(b->ang) * dt * b->leaveSpeed);
             b->y -= (float)(DVY(b->ang) * dt * b->leaveSpeed);
             if (b->x < -200 || b->x > 840 || b->y < -200 || b->y > 680) b->active = 0;
@@ -415,8 +421,9 @@ void haz_render(HDC dc) {
         HBlaster* b = &blasters[i];
         if (!b->active) continue;
         if (b->state >= 2 && b->baseSize > 1) {
-            draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize, brWhite);
-            draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize * 0.5, brCyan);
+            /* BTS: 단색 흰 빔(시안 없음) + SineSize 두께 진동. 입구 글로우. */
+            float sine = sinf(b->beamTimer * 20.0f) * b->baseSize / 4.0f;
+            draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize + sine, brWhite);
         }
         /* 머리: 회전 게이스터 블래스터 스프라이트(발사중=Fire) */
         game_draw_blaster(dc, b->x, b->y, b->ang, b->size, b->state >= 2);

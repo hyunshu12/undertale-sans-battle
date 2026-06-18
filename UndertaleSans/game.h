@@ -26,6 +26,7 @@ void game_set_max_fall(double v);              /* HeartMaxFallSpeed */
 double game_get_max_fall(void);
 void game_sans_head(const char* state);        /* SansHead 표정(Default/BlueEye/NoEyes/ClosedEyes/Tired) */
 void game_sans_body(const char* pose);         /* SansBody 팔 포즈(HandUp/Down/Left/Right) */
+void game_sans_animation(const char* name);    /* SansAnimation 호흡(Idle/HeadBob/Tired) */
 void game_sans_x(int x);                        /* SansX 가로 위치(기본 320) */
 void game_sans_slam(int dir);                   /* SansSlam: 영혼을 dir(0우1하2좌3상) 방향으로 내리꽂기 */
 void game_draw_blaster(HDC dc, double cx, double cy, double ang, int size, int firing); /* 회전 블래스터 스프라이트 */
