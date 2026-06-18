@@ -46,10 +46,10 @@
 #define CLIENT_W   640
 #define CLIENT_H   480
 
-#define BOX_X      170
-#define BOX_Y      234       /* 샌즈 전신(발끝 y=224) 아래로 박스 배치(BTS 레이아웃) */
-#define BOX_W      300
-#define BOX_H      150
+#define BOX_X      33        /* BTS 기본 박스 33,251,608,391 (전폭 575). 공격이 CombatZoneResize로 변경 */
+#define BOX_Y      251
+#define BOX_W      575
+#define BOX_H      140
 
 #define SOUL_SIZE  16
 #define MAX_BONES  48
@@ -97,7 +97,7 @@ typedef struct { HBITMAP bmp; HDC dc; HBITMAP oldbmp; int w, h, ok; } Sprite;
 static HWND     gHwnd;
 static HDC      gMemDC;
 static HBITMAP  gMemBmp, gOldBmp;
-static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan, gKarmaBr;
+static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan, gKarmaBr, gHpBg;
 static HFONT    gFontBig, gFontSmall, gFontTiny;
 static int      gPixelFontOk = 0;   /* 네오둥근모 픽셀 폰트 로드 성공 여부 */
 static int      gRunning = 1;
@@ -455,8 +455,10 @@ static void hurtSoul(void) {
 /* --- hazards/VM 가 호출하는 game 후크 (game.h 선언) --- */
 void game_get_heart(double* cx, double* cy) { *cx = gSoul.x + SOUL_SIZE / 2.0; *cy = gSoul.y + SOUL_SIZE / 2.0; }
 int  game_heart_moving(void) {
-    if (gSoulMode == 1) return keyDown(VK_LEFT) || keyDown('A') || keyDown(VK_RIGHT) || keyDown('D');
-    return (gSoul.x != gPrevSx) || (gSoul.y != gPrevSy);
+    /* BTS: 실제 위치 변화(속도≠0)로 판정 — 두 모드 공통. 파랑모드도 점프/낙하 포함.
+       (착지·정지 시 속도0 → 파란뼈 통과, 이동/점프 시 → 파란뼈 피격) */
+    float dx = gSoul.x - gPrevSx, dy = gSoul.y - gPrevSy;
+    return (dx > 0.05f || dx < -0.05f || dy > 0.05f || dy < -0.05f);
 }
 void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
@@ -885,21 +887,21 @@ static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
     }
 }
 static void drawHpBar(void) {
-    int hpx = 250, hpy = 398, hpw = 120, hph = 20;
+    int hpx = 256, hpy = 400, hpw = 110, hph = 21;   /* BTS 정확 좌표/크기 */
     int cur = (int)(hpw * (gSoul.hp / (float)gSoul.maxHp));
     wchar_t buf[48];
-    drawText(gMemDC, 120, hpy - 1, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
-    fillRect(gMemDC, hpx, hpy, hpw, hph, gDkRed);
+    drawText(gMemDC, 32, hpy, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
+    fillRect(gMemDC, hpx, hpy, hpw, hph, gHpBg);
     fillRect(gMemDC, hpx, hpy, cur, hph, gYellow);
-    if (gKR > 0) {   /* KARMA(마젠타, BTS KR #FF00FF) — 현재 HP의 오른쪽 끝 일부가 깎일 예정 */
+    if (gKR > 0) {   /* KARMA(마젠타, BTS KR #FF00FF) — 현재 HP 오른쪽 끝 일부가 깎일 예정 */
         int krw;
         if (!gKarmaBr) gKarmaBr = CreateSolidBrush(RGB(255, 0, 255));
         krw = (int)(hpw * (gKR / (float)gSoul.maxHp));
         if (krw > cur) krw = cur;
         fillRect(gMemDC, hpx + cur - krw, hpy, krw, hph, gKarmaBr);
     }
-    wsprintfW(buf, L"HP %d / %d", gSoul.hp, gSoul.maxHp);
-    drawText(gMemDC, hpx + hpw + 12, hpy - 1, buf, RGB(255, 255, 255), gFontSmall);
+    wsprintfW(buf, L"HP  %02d / %d", gSoul.hp, gSoul.maxHp);   /* BTS: 0패딩 */
+    drawText(gMemDC, hpx + hpw + 14, hpy, buf, gKR > 0 ? RGB(255, 0, 255) : RGB(255, 255, 255), gFontSmall);
 }
 static void drawSoul(void) {
     Sprite* h;
@@ -1083,6 +1085,7 @@ static void initResources(void) {
     gBlue   = CreateSolidBrush(RGB(60, 120, 255));
     gDkRed  = CreateSolidBrush(RGB(90, 0, 0));
     gCyan   = CreateSolidBrush(RGB(0, 220, 255));
+    gHpBg   = CreateSolidBrush(RGB(191, 0, 0));   /* BTS HP바 빈칸 색 */
 
     /* 언더테일 한국어 패치 느낌의 픽셀 글꼴(네오둥근모)을 설치 없이 런타임 로드.
        실패하면 맑은 고딕으로 폴백. 픽셀 폰트는 안티에일리어싱을 꺼 또렷하게. */
@@ -1144,7 +1147,7 @@ static void freeResources(void) {
     if (gMemDC) { SelectObject(gMemDC, gOldBmp); DeleteDC(gMemDC); }
     if (gMemBmp) DeleteObject(gMemBmp);
     DeleteObject(gBlack); DeleteObject(gWhite); DeleteObject(gRed); DeleteObject(gYellow);
-    DeleteObject(gBlue); DeleteObject(gDkRed); DeleteObject(gCyan);
+    DeleteObject(gBlue); DeleteObject(gDkRed); DeleteObject(gCyan); DeleteObject(gHpBg);
     if (gKarmaBr) DeleteObject(gKarmaBr);
     DeleteObject(gFontBig); DeleteObject(gFontSmall); DeleteObject(gFontTiny);
     haz_free();   /* hazards.c 브러시 해제 */

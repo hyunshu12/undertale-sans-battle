@@ -134,7 +134,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
     if (strcmp(cmd, "HeartMode") == 0)      { game_set_heart_mode((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "HeartMaxFallSpeed") == 0) { game_set_max_fall(argf(a, argc, 0)); return; }
     if (strcmp(cmd, "BoneV") == 0) {
-        spawn_bone(argf(a, argc, 0), argf(a, argc, 1), 8, argf(a, argc, 2),
+        spawn_bone(argf(a, argc, 0), argf(a, argc, 1), 10, argf(a, argc, 2),
                    argf(a, argc, 3), argf(a, argc, 4), (int)argf(a, argc, 5));
         return;
     }
@@ -143,7 +143,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
         int dir = (int)argf(a, argc, 3) & 3; double speed = argf(a, argc, 4);
         int count = (int)argf(a, argc, 5); double spacing = argf(a, argc, 6); int i;
         for (i = 0; i < count; i++)
-            spawn_bone(X - DVX(dir * 90) * spacing * i, Y - DVY(dir * 90) * spacing * i, 8, H, dir, speed, 0);
+            spawn_bone(X - DVX(dir * 90) * spacing * i, Y - DVY(dir * 90) * spacing * i, 10, H, dir, speed, 0);
         return;
     }
     if (strcmp(cmd, "BoneHRepeat") == 0) {
@@ -152,7 +152,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
         int dir = (int)argf(a, argc, 3) & 3; double speed = argf(a, argc, 4);
         int count = (int)argf(a, argc, 5); double spacing = argf(a, argc, 6); int i;
         for (i = 0; i < count; i++)
-            spawn_bone(X - DVX(dir * 90) * spacing * i, Y - DVY(dir * 90) * spacing * i, W, 8, dir, speed, 0);
+            spawn_bone(X - DVX(dir * 90) * spacing * i, Y - DVY(dir * 90) * spacing * i, W, 10, dir, speed, 0);
         return;
     }
     if (strcmp(cmd, "SineBones") == 0) {
@@ -166,10 +166,10 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
             double botY, botH;
             if (spacing > 0) { X = (gBox.x + gBox.w) + spacing * i; dir = 2; }
             else             { X = gBox.x + spacing * i;            dir = 0; }
-            spawn_bone(X, gBox.y + 6, 8, topH, dir, speed, 0);          /* 상단 */
+            spawn_bone(X, gBox.y + 6, 10, topH, dir, speed, 0);          /* 상단 */
             botY = gBox.y + 6 + topH + 39;
             botH = (gBox.y + gBox.h - 5) - botY;
-            if (botH > 4) spawn_bone(X, botY, 8, botH, dir, speed, 0);  /* 하단 */
+            if (botH > 4) spawn_bone(X, botY, 10, botH, dir, speed, 0);  /* 하단 */
         }
         return;
     }
