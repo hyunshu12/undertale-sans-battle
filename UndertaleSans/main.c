@@ -108,6 +108,8 @@ static Sprite   gSprBodyDown, gSprBodyUp, gSprBodyLeft, gSprBodyRight, gSprSweat
 static Sprite   gSprHeadDef, gSprHeadBlue, gSprHeadNoEye, gSprHeadClosed, gSprHeadTired, gSprHeadTired2, gSprHeadWink, gSprHeadLook; /* 머리 표정 */
 static Sprite   gSprHeart, gSprHeartBlue, gSprBlaster, gSprBlasterFire; /* gSprBlaster/Fire=Slice2 폴백 */
 static Sprite   gSprFight, gSprAct, gSprItem, gSprMercy;
+static Sprite   gSprFightHi, gSprActHi, gSprItemHi, gSprMercyHi;       /* 선택 시 노란 채움 버튼 */
+static Sprite   gSprHeartSplit, gSprHeartShard;                        /* 죽음: 금간하트/파편 */
 static Sprite   gSprBlasterD[8], gSprBlasterF[8];                       /* 8각 사전회전 게이스터(VM) */
 
 static GameState gState = ST_TITLE;
@@ -151,6 +153,10 @@ static int    gKR = 0;                  /* KARMA(누적 카르마 데미지) */
 static float  gKR_t = 0.0f;
 static float  gSndHurtT = 0.0f;         /* 피격음 스로틀(연속피격시 소리 도배 방지) */
 static float  gKarmaStreak = 0.0f;      /* 연속피격 카르마 캡(BTS: 지속접촉시 카르마 2로 제한) */
+/* 죽음 연출: 금간 하트 → 6조각 파편 (BTS) */
+static float  gDeathT = 0.0f, gDeathX = 0.0f, gDeathY = 0.0f;
+static int    gDeathShatter = 0;
+static float  gShardX[6], gShardY[6], gShardVx[6], gShardVy[6];
 
 /* --- 전투 흐름(HitAttempts) / 샌즈 회피 / 대사 큐 --- */
 static int    gHitAttempts = 0;          /* FIGHT(샌즈 회피) 성공 횟수 → 공격 선택 */
@@ -456,11 +462,19 @@ static void spawnBlaster(void) {
     }
 }
 
+/* 죽음 연출 시작: 영혼이 죽은 자리에서 금간 하트 → 파편 (BTS) */
+static void startDeath(void) {
+    gSoul.hp = 0; gKR = 0;
+    gDeathX = gSoul.x + SOUL_SIZE / 2.0f; gDeathY = gSoul.y + SOUL_SIZE / 2.0f;
+    gDeathT = 0.0f; gDeathShatter = 0;
+    gState = ST_GAMEOVER; stopBGM();
+    game_play_sound("PlayerDamaged");   /* HeartSplit 대용 */
+}
 static void hurtSoul(void) {
     if (gSoul.invuln > 0.0f) return;
     gSoul.hp -= HIT_DAMAGE;
     gSoul.invuln = 1.0f;
-    if (gSoul.hp <= 0) { gSoul.hp = 0; gState = ST_GAMEOVER; stopBGM(); }
+    if (gSoul.hp <= 0) startDeath();
 }
 
 /* --- hazards/VM 가 호출하는 game 후크 (game.h 선언) --- */
@@ -480,7 +494,7 @@ void game_hurt(int dmg, int karma) {
     gKR += diffKarma(karma); if (gKR > 40) gKR = 40;
     if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
     gSoul.invuln = diffInvuln();   /* 난이도별 무적시간(HARD=BTS 0.034s) */
-    if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
+    if (gSoul.hp <= 0) startDeath();
 }
 void game_set_heart_mode(int blue) { gSoulMode = blue; if (blue) gGravDir = 1; }  /* 파랑=기본 아래중력 */
 void game_teleport_heart(double x, double y) {
@@ -830,7 +844,7 @@ static void update(float dt) {
             gKR_t += dt;
             if (gKR_t >= iv) {
                 gKR--; gSoul.hp--; gKR_t = 0.0f;
-                if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
+                if (gSoul.hp <= 0) startDeath();
             }
         }
         if (gPhase == PH_DIALOGUE) {
@@ -853,14 +867,12 @@ static void update(float dt) {
         } else if (gPhase == PH_MENU) {
             updateMenuPhase(lPressed, rPressed, zPressed);
         } else if (gPhase == PH_FIGHT) {
-            /* 샌즈 회피: 옆으로 휙 → 0.45s 후 제자리. 끝나면 HitAttempts++ → 다음 공격 */
+            /* 샌즈 회피 4단계(BTS): 0~0.4 빠짐(x=220) → 1.1까지 유지 → 1.5 복귀 → HA++ */
             gSansDodgeT += dt;
-            gSansOffsetX = -(float)cos((double)gSansDodgeT * 225.0 * M_PI / 180.0) * 100.0f;
-            if (gSansDodgeT > 0.45f) {
-                gSansOffsetX = 0.0f;
-                gHitAttempts++;
-                startEnemyPhase();
-            }
+            if (gSansDodgeT < 0.4f)      gSansOffsetX = -100.0f * (gSansDodgeT / 0.4f);
+            else if (gSansDodgeT < 1.1f) gSansOffsetX = -100.0f;
+            else if (gSansDodgeT < 1.5f) gSansOffsetX = -100.0f * (1.0f - (gSansDodgeT - 1.1f) / 0.4f);
+            else { gSansOffsetX = 0.0f; gHitAttempts++; startEnemyPhase(); }
         } else { /* PH_ACTION (ACT/ITEM/MERCY 결과) → 메뉴로 복귀 */
             int len = (int)wcslen(gMessage);
             gTypePos += dt * 32.0f;
@@ -872,6 +884,24 @@ static void update(float dt) {
         }
         break;
     case ST_GAMEOVER:
+        gDeathT += dt;
+        if (!gDeathShatter && gDeathT >= 0.7f) {   /* 금간 하트 → 산산조각 */
+            int si;
+            gDeathShatter = 1;
+            game_play_sound("Slam");   /* HeartShatter 대용 */
+            for (si = 0; si < 6; si++) {
+                float a = (float)((30 + si * 60) * 3.14159265 / 180.0);
+                gShardX[si] = gDeathX; gShardY[si] = gDeathY;
+                gShardVx[si] = (float)cos(a) * 150.0f;
+                gShardVy[si] = (float)sin(a) * 150.0f - 120.0f;   /* 살짝 위로 튄 뒤 낙하 */
+            }
+        }
+        if (gDeathShatter) {
+            int si;
+            for (si = 0; si < 6; si++) { gShardVy[si] += 360.0f * dt; gShardX[si] += gShardVx[si] * dt; gShardY[si] += gShardVy[si] * dt; }
+        }
+        if (gDeathT > 2.2f && zPressed) gState = ST_TITLE;
+        break;
     case ST_WIN:
         if (zPressed) { gState = ST_TITLE; }
         break;
@@ -933,18 +963,18 @@ static void drawSans(void) {
         fillRect(gMemDC, hx + 20, hy + 44, 36, 5, gBlack);
     }
 }
-static void drawMenuButton(Sprite* s, const wchar_t* label, int idx) {
+static void drawMenuButton(Sprite* s, Sprite* hi, const wchar_t* label, int idx) {
     int x = gMenuBtnX[idx];
-    if (s->ok) drawSprite(s, x, BTN_Y);
-    else { fillRect(gMemDC, x, BTN_Y, BTN_W, BTN_H, gDkRed); drawText(gMemDC, x + 14, BTN_Y + 10, label, RGB(255, 160, 0), gFontSmall); }
-    if (gPhase == PH_MENU && gMenuIndex == idx) {
-        /* 선택 하이라이트 + 하트 커서 (펜은 1회 생성한 gMenuPen 재사용) */
-        HBRUSH ob = (HBRUSH)SelectObject(gMemDC, GetStockObject(NULL_BRUSH));
-        HPEN op = (HPEN)SelectObject(gMemDC, gMenuPen);
-        Rectangle(gMemDC, x - 4, BTN_Y - 4, x + BTN_W + 4, BTN_Y + BTN_H + 4);
-        SelectObject(gMemDC, op); SelectObject(gMemDC, ob);
-        if (gSprHeart.ok) drawSprite(&gSprHeart, x - 26, BTN_Y + 13);
-        else fillRect(gMemDC, x - 26, BTN_Y + 13, SOUL_SIZE, SOUL_SIZE, gRed);
+    int sel = (gPhase == PH_MENU && gMenuIndex == idx);
+    Sprite* spr = (sel && hi->ok) ? hi : s;   /* BTS: 선택 시 노란 채움 스프라이트로 교체 */
+    if (spr->ok) drawSprite(spr, x, BTN_Y);
+    else {   /* 폴백: 선택 시 노랑 */
+        fillRect(gMemDC, x, BTN_Y, BTN_W, BTN_H, sel ? gYellow : gDkRed);
+        drawText(gMemDC, x + 14, BTN_Y + 10, label, sel ? RGB(0, 0, 0) : RGB(255, 160, 0), gFontSmall);
+    }
+    if (sel) {   /* 하트 커서(버튼 왼쪽) */
+        if (gSprHeart.ok) drawSprite(&gSprHeart, x - 22, BTN_Y + 13);
+        else fillRect(gMemDC, x - 22, BTN_Y + 13, SOUL_SIZE, SOUL_SIZE, gRed);
     }
 }
 static void drawHpBar(void) {
@@ -1011,10 +1041,19 @@ static void render(void) {
         drawTextCentered(CLIENT_W / 2, 372, L"← → 선택    Z 확인", RGB(160, 160, 160), gFontTiny);
         return;
     }
-    if (gState == ST_GAMEOVER) {
-        drawTextCentered(CLIENT_W / 2, 172, L"GAME OVER", RGB(255, 0, 0), gFontBig);
-        drawTextCentered(CLIENT_W / 2, 284, L"* 의지를 잃지 마...", RGB(255, 255, 255), gFontSmall);
-        drawTextCentered(CLIENT_W / 2, 324, L"Z를 눌러 타이틀로 돌아가기", RGB(255, 255, 0), gFontSmall);
+    if (gState == ST_GAMEOVER) {   /* BTS: 금간 하트 → 6조각 파편 (GAME OVER 텍스트 없음) */
+        if (gDeathT < 0.7f) {
+            if (gSprHeartSplit.ok) drawSprite(&gSprHeartSplit, (int)gDeathX - 8, (int)gDeathY - 10);
+            else fillRect(gMemDC, (int)gDeathX - 8, (int)gDeathY - 8, SOUL_SIZE, SOUL_SIZE, gRed);
+        } else {
+            int si;
+            for (si = 0; si < 6; si++) {
+                if (gSprHeartShard.ok) drawSprite(&gSprHeartShard, (int)gShardX[si] - 8, (int)gShardY[si] - 8);
+                else fillRect(gMemDC, (int)gShardX[si] - 3, (int)gShardY[si] - 3, 6, 6, gRed);
+            }
+        }
+        if (gDeathT > 2.2f)
+            drawTextCentered(CLIENT_W / 2, 340, L"Z를 눌러 타이틀로 돌아가기", RGB(255, 255, 0), gFontSmall);
         return;
     }
     if (gState == ST_WIN) {
@@ -1057,7 +1096,8 @@ static void render(void) {
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else if (gPhase == PH_FIGHT) {
         drawText(gMemDC, BOX_X + 12, BOX_Y + 16, L"* 공격!", RGB(255, 255, 255), gFontSmall);
-        drawTextCentered(SANS_CX + (int)gSansOffsetX, SANS_FEET - 24, L"빗나감!", RGB(255, 255, 0), gFontSmall);
+        if (gSansDodgeT > 0.6f)   /* BTS: 회피 후 회색 MISS (DamageFont #BFBFBF) */
+            drawTextCentered(SANS_CX + (int)gSansOffsetX, 112, L"빗나감!", RGB(191, 191, 191), gFontSmall);
     } else if (gPhase == PH_ENEMY) {
         if (gUseVM) {
             haz_render(gMemDC);   /* VM 탄막 렌더 */
@@ -1095,10 +1135,10 @@ static void render(void) {
     }
 
     drawHpBar();
-    drawMenuButton(&gSprFight, L"FIGHT", 0);
-    drawMenuButton(&gSprAct,   L"ACT",   1);
-    drawMenuButton(&gSprItem,  L"ITEM",  2);
-    drawMenuButton(&gSprMercy, L"MERCY", 3);
+    drawMenuButton(&gSprFight, &gSprFightHi, L"FIGHT", 0);
+    drawMenuButton(&gSprAct,   &gSprActHi,   L"ACT",   1);
+    drawMenuButton(&gSprItem,  &gSprItemHi,  L"ITEM",  2);
+    drawMenuButton(&gSprMercy, &gSprMercyHi, L"MERCY", 3);
 
     if (gBlackScreen) fillRect(gMemDC, 0, 0, CLIENT_W, CLIENT_H, gBlack);  /* 플래시 연출 */
 
@@ -1258,6 +1298,12 @@ static void initResources(void) {
     gSprAct         = loadSprite("ui_act.bmp");
     gSprItem        = loadSprite("ui_item.bmp");
     gSprMercy       = loadSprite("ui_mercy.bmp");
+    gSprFightHi     = loadSprite("ui_fight_hi.bmp");
+    gSprActHi       = loadSprite("ui_act_hi.bmp");
+    gSprItemHi      = loadSprite("ui_item_hi.bmp");
+    gSprMercyHi     = loadSprite("ui_mercy_hi.bmp");
+    gSprHeartSplit  = loadSprite("heart_split.bmp");
+    gSprHeartShard  = loadSprite("heart_shard.bmp");
     {   /* 8각 사전회전 게이스터 블래스터 */
         int i; char nm[24];
         for (i = 0; i < 8; i++) {
@@ -1277,6 +1323,8 @@ static void freeResources(void) {
     freeSprite(&gSprHeadWink); freeSprite(&gSprHeadLook);
     freeSprite(&gSprHeart); freeSprite(&gSprHeartBlue); freeSprite(&gSprBlaster); freeSprite(&gSprBlasterFire);
     freeSprite(&gSprFight); freeSprite(&gSprAct); freeSprite(&gSprItem); freeSprite(&gSprMercy);
+    freeSprite(&gSprFightHi); freeSprite(&gSprActHi); freeSprite(&gSprItemHi); freeSprite(&gSprMercyHi);
+    freeSprite(&gSprHeartSplit); freeSprite(&gSprHeartShard);
     for (i = 0; i < 8; i++) { freeSprite(&gSprBlasterD[i]); freeSprite(&gSprBlasterF[i]); }
     if (gMenuPen) DeleteObject(gMenuPen);
     if (gMemDC) { SelectObject(gMemDC, gOldBmp); DeleteDC(gMemDC); }
