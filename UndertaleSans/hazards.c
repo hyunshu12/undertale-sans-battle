@@ -18,6 +18,10 @@
 
 static double DVX(double deg) { return cos(deg * M_PI / 180.0); }
 static double DVY(double deg) { return sin(deg * M_PI / 180.0); }
+/* 최적화: 뼈/플랫폼 각도는 항상 (dir&3)*90 → cos/sin 대신 룩업 */
+static const double LVX[4] = { 1, 0, -1, 0 };
+static const double LVY[4] = { 0, 1, 0, -1 };
+#define DIRI(ang) (((int)((ang) / 90.0f)) & 3)
 
 typedef struct { float x, y, w, h; float ang; float speed; int color; int active; } HBone;
 typedef struct { float x, y, w; float ang; float speed; int reverse; int active; } HPlat;
@@ -45,8 +49,8 @@ static HBRUSH brWhite = NULL, brBlue = NULL, brOrange = NULL, brCyan = NULL;
 static void ensure_brushes(void) {
     if (!brWhite) {
         brWhite  = CreateSolidBrush(RGB(255, 255, 255));
-        brBlue   = CreateSolidBrush(RGB(80, 160, 255));
-        brOrange = CreateSolidBrush(RGB(255, 160, 0));
+        brBlue   = CreateSolidBrush(RGB(20, 169, 255));   /* BTS 파란뼈 #14A9FF */
+        brOrange = CreateSolidBrush(RGB(255, 160, 64));   /* BTS 주황뼈 #FFA040 */
         brCyan   = CreateSolidBrush(RGB(0, 220, 255));
     }
 }
@@ -205,13 +209,15 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
             spawn_plat(X - DVX(dir * 90) * spacing * i, Y - DVY(dir * 90) * spacing * i, W, dir, speed, 0);
         return;
     }
-    if (strcmp(cmd, "SansSlam") == 0) { game_set_heart_mode(1); return; } /* BLUE 슬램 물리는 다음 푸시 */
+    if (strcmp(cmd, "SansSlam") == 0)   { game_sans_slam((int)argf(a, argc, 0)); return; } /* dir 방향 내리꽂기 */
+    if (strcmp(cmd, "SansHead") == 0)   { game_sans_head(a[0]); return; }   /* 표정 */
+    if (strcmp(cmd, "SansBody") == 0)   { game_sans_body(a[0]); return; }   /* 팔 포즈(Push2) */
+    if (strcmp(cmd, "SansX") == 0)      { game_sans_x((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "Sound") == 0)      { game_play_sound(a[0]); return; }
     if (strcmp(cmd, "BlackScreen") == 0){ game_set_blackscreen((int)argf(a, argc, 0)); return; }
     if (strcmp(cmd, "SansText") == 0)   { game_sans_text(a[0]); return; }
     if (strcmp(cmd, "EndAttack") == 0)  { game_end_attack(); return; }
-    /* SansBody/SansHead/SansTorso/SansAnimation/SansSweat/SansX/SansRepeat/SansSlamDamage
-       등 Sans 비주얼/잔여는 무시(스프라이트 토글은 추후). */
+    /* SansTorso/SansAnimation/SansSweat/SansRepeat/SansSlamDamage 등 잔여는 무시(Push2). */
 }
 
 /* ---- 충돌 헬퍼 ---- */
@@ -239,9 +245,11 @@ void haz_update(float dt) {
 
     /* 뼈 */
     for (i = 0; i < HAZ_MAX_BONES; i++) {
+        int d;
         if (!bones[i].active) continue;
-        bones[i].x += (float)(DVX(bones[i].ang) * bones[i].speed * dt);
-        bones[i].y += (float)(DVY(bones[i].ang) * bones[i].speed * dt);
+        d = DIRI(bones[i].ang);   /* 최적화: cos/sin 대신 룩업 */
+        bones[i].x += (float)(LVX[d] * bones[i].speed * dt);
+        bones[i].y += (float)(LVY[d] * bones[i].speed * dt);
         if (bones[i].x + bones[i].w < gBox.x - 80 || bones[i].x > gBox.x + gBox.w + 80 ||
             bones[i].y + bones[i].h < gBox.y - 80 || bones[i].y > gBox.y + gBox.h + 80) { bones[i].active = 0; continue; }
         if (aabb_hit(bones[i].x, bones[i].y, bones[i].w, bones[i].h)) {
@@ -252,11 +260,13 @@ void haz_update(float dt) {
         }
     }
 
-    /* 플랫폼(이동/왕복; 착지물리는 다음 푸시) */
+    /* 플랫폼(이동/왕복) */
     for (i = 0; i < HAZ_MAX_PLATS; i++) {
+        int d;
         if (!plats[i].active) continue;
-        plats[i].x += (float)(DVX(plats[i].ang) * plats[i].speed * dt);
-        plats[i].y += (float)(DVY(plats[i].ang) * plats[i].speed * dt);
+        d = DIRI(plats[i].ang);   /* 최적화: 룩업 */
+        plats[i].x += (float)(LVX[d] * plats[i].speed * dt);
+        plats[i].y += (float)(LVY[d] * plats[i].speed * dt);
         if (plats[i].reverse) {
             if (plats[i].x < gBox.x || plats[i].x + plats[i].w > gBox.x + gBox.w ||
                 plats[i].y < gBox.y || plats[i].y > gBox.y + gBox.h)
@@ -389,11 +399,8 @@ void haz_render(HDC dc) {
             draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize, brWhite);
             draw_beam(dc, b->x, b->y, b->ang, 1000, b->baseSize * 0.5, brCyan);
         }
-        /* 머리(간단한 흰 사각, 회전 생략) */
-        { int hs = (b->size == 2 ? 40 : 28);
-          r.left = (int)b->x - hs / 2; r.top = (int)b->y - hs / 2;
-          r.right = (int)b->x + hs / 2; r.bottom = (int)b->y + hs / 2;
-          FillRect(dc, &r, brWhite); }
+        /* 머리: 회전 게이스터 블래스터 스프라이트(발사중=Fire) */
+        game_draw_blaster(dc, b->x, b->y, b->ang, b->size, b->state >= 2);
     }
 }
 
