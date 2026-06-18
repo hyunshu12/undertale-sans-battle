@@ -305,7 +305,7 @@ void haz_update(float dt) {
                 game_shake(5.0);
             }
         }
-        if (b->state >= 2) {            /* 빔 활성(FIRE/LEAVE 동안) */
+        if (b->state == 3) {            /* BTS: 빔은 FIRE→LEAVE 전환에서만 발사(FIRE 중엔 턱만 벌림) */
             /* BTS: Size0 maxH35/scale0.5, Size1 70/1.0, Size2 105/1.5 */
             float maxH  = (b->size == 0 ? 35.0f : b->size == 1 ? 70.0f : 105.0f);
             float bscale = (b->size == 0 ? 0.5f : b->size == 1 ? 1.0f : 1.5f);
@@ -431,7 +431,7 @@ void haz_render(HDC dc) {
     for (i = 0; i < HAZ_MAX_BLASTERS; i++) {
         HBlaster* b = &blasters[i];
         if (!b->active) continue;
-        if (b->state >= 2 && b->baseSize > 1) {
+        if (b->state == 3 && b->baseSize > 1) {   /* BTS: 빔은 LEAVE에서만 렌더 */
             /* BTS: 흰 빔 + SineSize 두께 진동. 외곽 흐린 글로우 + 흰 코어. */
             float sine = sinf(b->beamTimer * 20.0f) * b->baseSize / 4.0f;
             draw_beam(dc, b->x, b->y, b->ang, 1000, (b->baseSize + sine) * 1.35f, brGlow);
