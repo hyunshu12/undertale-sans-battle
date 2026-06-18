@@ -1138,7 +1138,7 @@ static void render(void) {
             if (gSprStrike[f].ok) drawSprite(&gSprStrike[f], SANS_CX - gSprStrike[f].w / 2, 132 - gSprStrike[f].h / 2);
         }
         if (gSansDodgeT > 0.6f)   /* BTS: 회피 후 회색 MISS (DamageFont #BFBFBF) */
-            drawTextCentered(SANS_CX + (int)gSansOffsetX, 112, L"빗나감!", RGB(191, 191, 191), gFontSmall);
+            drawTextCentered(300, 80, L"빗나감!", RGB(191, 191, 191), gFontSmall);   /* BTS: 고정 위치(272,76), 회피 따라가지 않음 */
     } else if (gPhase == PH_ENEMY) {
         if (gUseVM) {
             haz_render(gMemDC);   /* VM 탄막 렌더 */
