@@ -664,8 +664,10 @@ static void updateEnemyPhase(float dt) {
                        (gVy >= 0 && haz_is_solid(gSoul.x, gSoul.y + SOUL_SIZE, SOUL_SIZE, 3, &ptopY) &&
                         gSoul.y + SOUL_SIZE <= ptopY + 8);
             if (!grounded) {                                  /* 가변 중력 밴드 */
-                if (gVy > 240.0f) g = 540.0f; else if (gVy > 15.0f) g = 180.0f;
-                else if (gVy > -30.0f) g = 450.0f; else g = 180.0f;
+                if (gVy > 15.0f) g = 540.0f;        /* BTS: 15<v 본낙하 강중력(≥240도 540 유지) */
+                else if (gVy > -30.0f) g = 180.0f;  /* -30<v≤15 정점 부근 약중력 */
+                else if (gVy > -120.0f) g = 450.0f; /* -120<v≤-30 상승 강감속 */
+                else g = 180.0f;                    /* v≤-120 */
                 gVy += g * dt;
             }
             if (gMaxFall >= 0) { if (gVy > (float)gMaxFall) gVy = (float)gMaxFall; }  /* BTS: 단방향 부호 클램프 */
@@ -715,8 +717,10 @@ static void updateEnemyPhase(float dt) {
             wallPos = wallX * gvx + wallY * gvy;
             grounded = (soulLead >= wallPos - 1.0f);
             if (!grounded) {                                /* 가변 중력 밴드(아래와 동일) */
-                if (fall > 240.0f) g = 540.0f; else if (fall > 15.0f) g = 180.0f;
-                else if (fall > -30.0f) g = 450.0f; else g = 180.0f;
+                if (fall > 15.0f) g = 540.0f;        /* BTS: 15<v 본낙하 강중력(≥240도 540 유지) */
+                else if (fall > -30.0f) g = 180.0f;  /* -30<v≤15 정점 부근 약중력 */
+                else if (fall > -120.0f) g = 450.0f; /* -120<v≤-30 상승 강감속 */
+                else g = 180.0f;                     /* v≤-120 */
                 fall += g * dt;
             }
             if (gMaxFall >= 0) { if (fall > (float)gMaxFall) fall = (float)gMaxFall; }  /* BTS 단방향 부호 클램프 */
