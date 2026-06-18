@@ -101,6 +101,8 @@ static HBRUSH   gBlack, gWhite, gRed, gYellow, gBlue, gDkRed, gCyan, gKarmaBr, g
 static HFONT    gFontBig, gFontSmall, gFontTiny;
 static int      gPixelFontOk = 0;   /* 네오둥근모 픽셀 폰트 로드 성공 여부 */
 static int      gRunning = 1;
+static int      gFullscreen = 1;    /* 1=전체화면(테두리없는 풀스크린, 기본) */
+static int      gDstX = 0, gDstY = 0, gDstW = CLIENT_W, gDstH = CLIENT_H; /* 레터박스 대상 사각형 */
 
 static Sprite   gSprLegs, gSprTorso;                                    /* 샌즈 다리/몸통 */
 static Sprite   gSprBodyDown, gSprBodyUp, gSprBodyLeft, gSprBodyRight, gSprSweat; /* 팔포즈/땀 */
@@ -214,11 +216,11 @@ static int   keyDown(int vk) {                                                  
 }
 static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (float)RAND_MAX); } /* [구현조건: 랜덤함수] */
 
-/* 난이도 스케일: EASY=관대, NORMAL=중간, HARD=BTS 원본 */
-static float diffInvuln(void)  { return gDifficulty == 0 ? 0.6f : gDifficulty == 1 ? 0.3f : 0.034f; }
-static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY 카르마 절반 */
+/* 난이도 스케일: NORMAL=BTS 웹 원본과 동일, EASY=채점/접근성, HARD=웹+조기자비 없음 */
+static float diffInvuln(void)  { return gDifficulty == 0 ? 0.4f : 0.034f; }     /* NORMAL/HARD=BTS 1프레임 */
+static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY만 카르마 절반 */
 static int   diffItems(void)   { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 3 : 2; }
-static int   diffMercyHA(void) { return gDifficulty == 0 ? 4 : gDifficulty == 1 ? 8 : 13; }
+static int   diffMercyHA(void) { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 13 : 22; } /* NORMAL=스페어(13) */
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
                         float bx, float by, float bw, float bh) {
@@ -977,15 +979,15 @@ static void render(void) {
         drawTextCentered(CLIENT_W / 2, 232, L"* 샌즈와의 전투", RGB(255, 255, 255), gFontSmall);
         drawTextCentered(CLIENT_W / 2, 286, L"Z 또는 Enter를 눌러 시작", RGB(255, 255, 0), gFontSmall);
         drawTextCentered(CLIENT_W / 2, 324, L"이동: 방향키/WASD    메뉴: ← →    확인: Z", RGB(160, 160, 160), gFontTiny);
-        drawTextCentered(CLIENT_W / 2, 348, L"종료: ESC", RGB(160, 160, 160), gFontTiny);
+        drawTextCentered(CLIENT_W / 2, 348, L"F11: 창/전체화면    종료: ESC", RGB(160, 160, 160), gFontTiny);
         return;
     }
     if (gState == ST_DIFFICULTY) {
         static const wchar_t* names[3] = { L"EASY", L"NORMAL", L"HARD" };
         static const wchar_t* desc[3]  = {
-            L"쉬움 — 넉넉한 무적시간·아이템 5개·빠른 자비",
-            L"보통 — 적당한 난이도",
-            L"어려움 — BTS 원본 그대로 (1프레임 무적)"
+            L"쉬움 — 채점·연습용. 넉넉한 무적시간·아이템 5개·빠른 자비",
+            L"보통 — BTS 웹 원본과 동일 (4px 히트박스·1프레임 무적)",
+            L"어려움 — 웹 원본 + 조기 자비 없음·아이템 2개"
         };
         int i;
         drawTextCentered(CLIENT_W / 2, 96, L"난이도 선택", RGB(255, 255, 255), gFontBig);
@@ -1112,17 +1114,64 @@ static void render(void) {
 }
 
 /* ---------------- Win32 ---------------- */
+/* 레터박스 대상 사각형 계산(현재 클라이언트에 640x480 비율유지로 맞춤) */
+static void computeDest(void) {
+    RECT cr; int cw, ch; double s, s2;
+    if (!gHwnd) return;
+    GetClientRect(gHwnd, &cr);
+    cw = cr.right - cr.left; ch = cr.bottom - cr.top;
+    if (cw <= 0 || ch <= 0) { gDstX = 0; gDstY = 0; gDstW = CLIENT_W; gDstH = CLIENT_H; return; }
+    s = (double)cw / CLIENT_W; s2 = (double)ch / CLIENT_H; if (s2 < s) s = s2;
+    gDstW = (int)(CLIENT_W * s); gDstH = (int)(CLIENT_H * s);
+    gDstX = (cw - gDstW) / 2; gDstY = (ch - gDstH) / 2;
+}
+/* 백버퍼(640x480)를 레터박스 스케일로 표시. 흔들림 오프셋(스케일 반영). */
+static void present(HDC dc) {
+    RECT cr; int sx, sy;
+    if (!gMemDC) return;
+    GetClientRect(gHwnd, &cr);
+    FillRect(dc, &cr, gBlack);   /* 레터박스 검정 */
+    sx = gDstX + (int)((double)gShakeDx * gDstW / CLIENT_W);
+    sy = gDstY + (int)((double)gShakeDy * gDstH / CLIENT_H);
+    SetStretchBltMode(dc, COLORONCOLOR);   /* 픽셀 또렷하게(니어리스트) */
+    StretchBlt(dc, sx, sy, gDstW, gDstH, gMemDC, 0, 0, CLIENT_W, CLIENT_H, SRCCOPY);
+}
+/* 전체화면 ↔ 창 적용(테두리없는 풀스크린=디스플레이모드 변경 없음→안정적, Alt+Tab 안전) */
+static void applyWindowMode(void) {
+    if (gFullscreen) {
+        int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+        SetWindowLongPtrA(gHwnd, GWL_STYLE, (LONG_PTR)(WS_POPUP | WS_VISIBLE));
+        SetWindowPos(gHwnd, HWND_TOP, 0, 0, sw, sh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    } else {
+        DWORD st = (WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX)) | WS_VISIBLE;
+        RECT rc; int ww, wh, px, py;
+        rc.left = 0; rc.top = 0; rc.right = CLIENT_W; rc.bottom = CLIENT_H;
+        AdjustWindowRect(&rc, st, FALSE);
+        ww = rc.right - rc.left; wh = rc.bottom - rc.top;
+        px = (GetSystemMetrics(SM_CXSCREEN) - ww) / 2; py = (GetSystemMetrics(SM_CYSCREEN) - wh) / 2;
+        if (px < 0) px = 0; if (py < 0) py = 0;
+        SetWindowLongPtrA(gHwnd, GWL_STYLE, (LONG_PTR)st);
+        SetWindowPos(gHwnd, HWND_TOP, px, py, ww, wh, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    computeDest();
+}
+
 static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_DESTROY: PostQuitMessage(0); return 0;
     case WM_CLOSE:   DestroyWindow(h); return 0;
+    case WM_SIZE:    computeDest(); return 0;   /* 해상도/크기 변경 시 레터박스 재계산 */
+    case WM_SETCURSOR:
+        if (gFullscreen && LOWORD(l) == HTCLIENT) { SetCursor(NULL); return TRUE; } /* 전체화면 커서 숨김 */
+        break;
     case WM_KEYDOWN:
         if (w == VK_ESCAPE) DestroyWindow(h);
-        else if (w == VK_F1) gDebug ^= 1;   /* 디버그 오버레이 토글 */
+        else if (w == VK_F1)  gDebug ^= 1;                       /* 디버그 오버레이 */
+        else if (w == VK_F11) { gFullscreen ^= 1; applyWindowMode(); }  /* 전체화면 토글 */
         return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps);
-        if (gMemDC) BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
+        present(dc);
         EndPaint(h, &ps); return 0;
     }
     }
@@ -1158,6 +1207,7 @@ static void initResources(void) {
     gMemDC  = CreateCompatibleDC(wdc);
     gMemBmp = CreateCompatibleBitmap(wdc, CLIENT_W, CLIENT_H);
     gOldBmp = (HBITMAP)SelectObject(gMemDC, gMemBmp);
+    PatBlt(gMemDC, 0, 0, CLIENT_W, CLIENT_H, BLACKNESS);   /* 첫 표시 전 검정 클리어(쓰레기값 방지) */
     ReleaseDC(gHwnd, wdc);
 
     gBlack  = CreateSolidBrush(RGB(0, 0, 0));
@@ -1277,26 +1327,14 @@ int main(void) {
                             rc.right - rc.left, rc.bottom - rc.top, NULL, NULL, hInst, NULL);
     if (!gHwnd) return 0;
 
-    /* 작업영역(작업표시줄 제외) 중앙에 창 배치 */
-    {
-        RECT wa, wr; int ww, wh, px, py;
-        SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
-        GetWindowRect(gHwnd, &wr);
-        ww = wr.right - wr.left; wh = wr.bottom - wr.top;
-        px = wa.left + ((wa.right - wa.left) - ww) / 2;
-        py = wa.top  + ((wa.bottom - wa.top) - wh) / 2;
-        if (px < wa.left) px = wa.left;
-        if (py < wa.top)  py = wa.top;
-        SetWindowPos(gHwnd, NULL, px, py, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-    }
-
-    initResources();
+    initResources();   /* gMemDC 생성(창 존재 필요) — applyWindowMode(표시) 전에 */
     openAllAudio();                        /* BGM 켜기 전에 MCI 음성/효과음 장치 미리 열기(루프 멈춤 방지) */
     gHost.on_command = haz_on_command;     /* VM → 게임 명령 라우팅 */
     gHost.get_heart_pos = haz_get_heart_pos;
     gHost.ctx = NULL;
-    ShowWindow(gHwnd, show);
+    applyWindowMode();   /* 전체화면(기본) 적용 + 표시 + 레터박스 계산 */
     UpdateWindow(gHwnd);
+    (void)show;
 
     timeBeginPeriod(1);
     QueryPerformanceFrequency(&freq);
@@ -1319,18 +1357,11 @@ int main(void) {
             acc += frame;
             while (acc >= FIXED_DT) { update((float)FIXED_DT); acc -= FIXED_DT; didUpdate = 1; }
             if (didUpdate) {            /* 갱신된 프레임만 그려 ~60fps로 캡(CPU 점유 절감) */
+                HDC dc;
                 render();
-                {
-                    HDC dc = GetDC(gHwnd);
-                    if (gShakeDx || gShakeDy) {   /* 흔들림: 대상 오프셋 + 빈 가장자리 검정(소스 범위초과 방지) */
-                        RECT wr; wr.left = 0; wr.top = 0; wr.right = CLIENT_W; wr.bottom = CLIENT_H;
-                        FillRect(dc, &wr, gBlack);
-                        BitBlt(dc, gShakeDx, gShakeDy, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
-                    } else {
-                        BitBlt(dc, 0, 0, CLIENT_W, CLIENT_H, gMemDC, 0, 0, SRCCOPY);
-                    }
-                    ReleaseDC(gHwnd, dc);
-                }
+                dc = GetDC(gHwnd);
+                present(dc);            /* 레터박스 스케일 표시(전체화면/창 공용) */
+                ReleaseDC(gHwnd, dc);
             }
         }
         Sleep(1);
