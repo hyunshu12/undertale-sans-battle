@@ -220,10 +220,13 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
     /* SansTorso/SansAnimation/SansSweat/SansRepeat/SansSlamDamage 등 잔여는 무시(Push2). */
 }
 
-/* ---- 충돌 헬퍼 ---- */
+/* ---- 충돌 헬퍼 ----
+   BTS는 16x16 하트 스프라이트가 아니라 중심의 4x4 PlayerHitbox로 판정한다.
+   → 좁은 틈(bonegap 14px 등)을 통과할 수 있고 회피가 공정해짐. 반경 ±2. */
+#define HIT_R 2
 static int aabb_hit(double bx, double by, double bw, double bh) {
     double hx, hy; game_get_heart(&hx, &hy);
-    return (hx - 8 < bx + bw && hx + 8 > bx && hy - 8 < by + bh && hy + 8 > by);
+    return (hx - HIT_R < bx + bw && hx + HIT_R > bx && hy - HIT_R < by + bh && hy + HIT_R > by);
 }
 
 /* ---- update ---- */
@@ -367,15 +370,26 @@ static void draw_beam(HDC dc, double bx, double by, double ang, double len, doub
     SelectObject(dc, op); SelectObject(dc, ob);
 }
 
+/* 언더테일 뼈 = 둥근 캡(캡슐) 모양. RoundRect로 끝을 반원 처리(길이 무관 깔끔). */
+static void fill_capsule(HDC dc, float fx, float fy, float fw, float fh, HBRUSH br) {
+    int x = (int)fx, y = (int)fy, w = (int)fw, h = (int)fh;
+    int rad = (w < h ? w : h);   /* 캡 지름 = 짧은 변 → 완전 둥근 끝 */
+    HBRUSH ob; HPEN op;
+    if (w < 3 || h < 3) { RECT rr; rr.left = x; rr.top = y; rr.right = x + w; rr.bottom = y + h; FillRect(dc, &rr, br); return; }
+    ob = (HBRUSH)SelectObject(dc, br);
+    op = (HPEN)SelectObject(dc, GetStockObject(NULL_PEN));
+    RoundRect(dc, x, y, x + w + 1, y + h + 1, rad, rad);   /* +1: NULL_PEN 1px 보정 */
+    SelectObject(dc, op); SelectObject(dc, ob);
+}
+
 void haz_render(HDC dc) {
     int i; RECT r;
     ensure_brushes();
-    /* 뼈 */
+    /* 뼈 — 둥근 캡슐(흰/파랑/주황) */
     for (i = 0; i < HAZ_MAX_BONES; i++) {
         if (!bones[i].active) continue;
-        r.left = (int)bones[i].x; r.top = (int)bones[i].y;
-        r.right = (int)(bones[i].x + bones[i].w); r.bottom = (int)(bones[i].y + bones[i].h);
-        FillRect(dc, &r, bones[i].color == 1 ? brBlue : bones[i].color == 2 ? brOrange : brWhite);
+        fill_capsule(dc, bones[i].x, bones[i].y, bones[i].w, bones[i].h,
+                     bones[i].color == 1 ? brBlue : bones[i].color == 2 ? brOrange : brWhite);
     }
     /* 플랫폼 */
     for (i = 0; i < HAZ_MAX_PLATS; i++) {
@@ -384,12 +398,17 @@ void haz_render(HDC dc) {
         r.right = (int)(plats[i].x + plats[i].w); r.bottom = (int)(plats[i].y + 6);
         FillRect(dc, &r, brWhite);
     }
-    /* 찌르기(예고=청록 반투명 느낌으로 cyan, 본체=흰) */
+    /* 찌르기(예고=청록 깜빡임, 본체=흰 캡슐) */
     for (i = 0; i < HAZ_MAX_STABS; i++) {
         if (!stabs[i].active) continue;
-        r.left = (int)stabs[i].x; r.top = (int)stabs[i].y;
-        r.right = (int)(stabs[i].x + stabs[i].w); r.bottom = (int)(stabs[i].y + stabs[i].h);
-        FillRect(dc, &r, stabs[i].state == 0 ? brCyan : brWhite);
+        if (stabs[i].state == 0) {   /* WARN: 깜빡이는 예고선 */
+            if (((int)(stabs[i].timer * 12.0f)) & 1) continue;
+            r.left = (int)stabs[i].x; r.top = (int)stabs[i].y;
+            r.right = (int)(stabs[i].x + stabs[i].w); r.bottom = (int)(stabs[i].y + stabs[i].h);
+            FillRect(dc, &r, brCyan);
+        } else {
+            fill_capsule(dc, stabs[i].x, stabs[i].y, stabs[i].w, stabs[i].h, brWhite);
+        }
     }
     /* 블래스터 빔 + 머리 */
     for (i = 0; i < HAZ_MAX_BLASTERS; i++) {
