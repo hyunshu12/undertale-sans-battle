@@ -79,7 +79,7 @@
 #define BTN_X0 79
 
 /* ---------------- 구조체 ([구현조건: 구조체]) ---------------- */
-typedef enum { ST_TITLE, ST_BATTLE, ST_GAMEOVER, ST_WIN } GameState;
+typedef enum { ST_TITLE, ST_DIFFICULTY, ST_BATTLE, ST_GAMEOVER, ST_WIN } GameState;
 typedef enum { PH_DIALOGUE, PH_ENEMY, PH_MENU, PH_ACTION, PH_FIGHT } Phase;
 
 typedef struct { float x, y; int maxHp, hp; float invuln; } Soul;
@@ -117,6 +117,8 @@ static Blaster   gBlasters[MAX_BLASTERS];  /* [구현조건: 배열] */
 static int       gTurn = 0;
 static int       gMenuIndex = 0;
 static int       gItemsLeft = 3;
+static int       gDifficulty = 1;   /* 0=EASY 1=NORMAL 2=HARD */
+static int       gDiffSel = 1;      /* 난이도 선택 커서 */
 static float     gSpawnTimer = 0.0f;
 static float     gBlasterTimer = 0.0f;
 static float     gEnemyTime = 0.0f;
@@ -211,6 +213,12 @@ static int   keyDown(int vk) {                                                  
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
 }
 static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (float)RAND_MAX); } /* [구현조건: 랜덤함수] */
+
+/* 난이도 스케일: EASY=관대, NORMAL=중간, HARD=BTS 원본 */
+static float diffInvuln(void)  { return gDifficulty == 0 ? 0.6f : gDifficulty == 1 ? 0.3f : 0.034f; }
+static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY 카르마 절반 */
+static int   diffItems(void)   { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 3 : 2; }
+static int   diffMercyHA(void) { return gDifficulty == 0 ? 4 : gDifficulty == 1 ? 8 : 13; }
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
                         float bx, float by, float bw, float bh) {
@@ -373,7 +381,7 @@ static void startEnding(int viaFinal) {
 static void startBattle(void) {
     gSoul.maxHp = MAX_HP; gSoul.hp = MAX_HP; gSoul.invuln = 0.0f;
     gKR = 0; gKR_t = 0.0f; gAtkIndex = 0; gHitAttempts = 0;
-    gTurn = 0; gMenuIndex = 0; gItemsLeft = 3;
+    gTurn = 0; gMenuIndex = 0; gItemsLeft = diffItems();
     gCurAtk[0] = 0; gSansOffsetX = 0.0f; gBubbleLen = 0; gBlackScreen = 0;
     gSansX = SANS_CX; lstrcpyA(gSansHead, "Default");
     clearHazards(); centerSoul();
@@ -465,9 +473,9 @@ void game_hurt(int dmg, int karma) {
     if (gSoul.invuln > 0.0f) return;
     gSoul.hp -= dmg;
     if (gSndHurtT <= 0.0f) { game_play_sound("PlayerDamaged"); gSndHurtT = 0.15f; }  /* 소리 스로틀 */
-    gKR += karma; if (gKR > 40) gKR = 40;
+    gKR += diffKarma(karma); if (gKR > 40) gKR = 40;
     if (gKR >= gSoul.hp) gKR = gSoul.hp > 1 ? gSoul.hp - 1 : 0;   /* 즉사 방지 */
-    gSoul.invuln = 0.034f;   /* BTS: ~1프레임만 무적(좁은 히트박스와 짝). 겹치면 계속 피격 */
+    gSoul.invuln = diffInvuln();   /* 난이도별 무적시간(HARD=BTS 0.034s) */
     if (gSoul.hp <= 0) { gSoul.hp = 0; gKR = 0; gState = ST_GAMEOVER; stopBGM(); }
 }
 void game_set_heart_mode(int blue) { gSoulMode = blue; if (blue) gGravDir = 1; }  /* 파랑=기본 아래중력 */
@@ -755,7 +763,7 @@ static void doAction(int idx) {
         }
         break;
     default: /* MERCY */
-        if (gHitAttempts >= MERCY_HA) { startEnding(0); return; }   /* 샌즈가 지침 → 자비 승리 */
+        if (gHitAttempts >= diffMercyHA()) { startEnding(0); return; }   /* 샌즈가 지침 → 자비 승리 */
         lstrcpyW(gMessage, L"* 샌즈는 아직 포기할 생각이 없어 보인다.");
         break;
     }
@@ -798,7 +806,13 @@ static void update(float dt) {
 
     switch (gState) {
     case ST_TITLE:
-        if (zPressed) startBattle();
+        if (zPressed) { gState = ST_DIFFICULTY; gDiffSel = 1; }   /* 난이도 선택으로 */
+        break;
+    case ST_DIFFICULTY:
+        if (lPressed && gDiffSel > 0) gDiffSel--;
+        if (rPressed && gDiffSel < 2) gDiffSel++;
+        if (keyDown(VK_ESCAPE)) { gState = ST_TITLE; }
+        if (zPressed) { gDifficulty = gDiffSel; startBattle(); }   /* 확정 → 전투 */
         break;
     case ST_BATTLE:
         if (gBubbleLen > 0) {           /* 샌즈 말풍선 타이핑/표시 */
@@ -967,6 +981,32 @@ static void render(void) {
         drawTextCentered(CLIENT_W / 2, 348, L"종료: ESC", RGB(160, 160, 160), gFontTiny);
         return;
     }
+    if (gState == ST_DIFFICULTY) {
+        static const wchar_t* names[3] = { L"EASY", L"NORMAL", L"HARD" };
+        static const wchar_t* desc[3]  = {
+            L"쉬움 — 넉넉한 무적시간·아이템 5개·빠른 자비",
+            L"보통 — 적당한 난이도",
+            L"어려움 — BTS 원본 그대로 (1프레임 무적)"
+        };
+        int i;
+        drawTextCentered(CLIENT_W / 2, 96, L"난이도 선택", RGB(255, 255, 255), gFontBig);
+        for (i = 0; i < 3; i++) {
+            int bx = 120 + i * 140, by = 210, bw = 120, bh = 54;
+            int sel = (gDiffSel == i);
+            COLORREF col = sel ? RGB(255, 255, 0) : RGB(120, 120, 120);
+            fillRect(gMemDC, bx, by, bw, bh, gDkRed);
+            if (sel) {   /* 선택 테두리 */
+                HBRUSH ob = (HBRUSH)SelectObject(gMemDC, GetStockObject(NULL_BRUSH));
+                HPEN op = (HPEN)SelectObject(gMemDC, gMenuPen);
+                Rectangle(gMemDC, bx - 4, by - 4, bx + bw + 4, by + bh + 4);
+                SelectObject(gMemDC, op); SelectObject(gMemDC, ob);
+            }
+            drawTextCentered(bx + bw / 2, by + 16, names[i], col, gFontSmall);
+        }
+        drawTextWrapped(60, 300, CLIENT_W - 120, 60, desc[gDiffSel], RGB(255, 255, 255), gFontSmall);
+        drawTextCentered(CLIENT_W / 2, 372, L"← → 선택    Z 확인    ESC 뒤로", RGB(160, 160, 160), gFontTiny);
+        return;
+    }
     if (gState == ST_GAMEOVER) {
         drawTextCentered(CLIENT_W / 2, 172, L"GAME OVER", RGB(255, 0, 0), gFontBig);
         drawTextCentered(CLIENT_W / 2, 284, L"* 의지를 잃지 마...", RGB(255, 255, 255), gFontSmall);
@@ -1046,7 +1086,7 @@ static void render(void) {
         if (n >= len) drawText(gMemDC, BOX_X + BOX_W - 70, BOX_Y + BOX_H - 24, L"[Z]", RGB(255, 255, 0), gFontTiny);
     } else { /* PH_MENU */
         drawText(gMemDC, BOX_X + 12, BOX_Y + 16, L"* 무엇을 할까...", RGB(255, 255, 255), gFontSmall);
-        if (gHitAttempts >= MERCY_HA)
+        if (gHitAttempts >= diffMercyHA())
             drawText(gMemDC, BOX_X + 12, BOX_Y + 44, L"* (자비 가능!)", RGB(255, 255, 0), gFontTiny);
     }
 
