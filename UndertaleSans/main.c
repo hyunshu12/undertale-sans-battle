@@ -906,13 +906,13 @@ static void update(float dt) {
             else if (gSansDodgeT < 1.1f) gSansOffsetX = -100.0f;
             else if (gSansDodgeT < 1.5f) gSansOffsetX = -100.0f * (1.0f - (gSansDodgeT - 1.1f) / 0.4f);
             else { gSansOffsetX = 0.0f; gHitAttempts++; startEnemyPhase(); }
-        } else { /* PH_ACTION (ACT/ITEM/MERCY 결과) → 메뉴로 복귀 */
+        } else { /* PH_ACTION (ACT/ITEM/MERCY 결과) → BTS: 모든 행동 후 샌즈가 공격 */
             int len = (int)wcslen(gMessage);
             gTypePos += dt * 32.0f;
             if ((int)gTypePos < len) { gVoiceTimer -= dt; if (gVoiceTimer <= 0.0f) { playVoice(); gVoiceTimer = 0.09f; } }
             if (zPressed) {
                 if (gTypePos < len) gTypePos = (float)len;
-                else { gPhase = PH_MENU; gMenuIndex = 0; }
+                else { gHitAttempts++; startEnemyPhase(); }   /* BTS: 행동 후 적 턴(공격) */
             }
         }
         break;
