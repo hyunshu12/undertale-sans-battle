@@ -483,7 +483,7 @@ static void startDeath(void) {
     gDeathX = gSoul.x + SOUL_SIZE / 2.0f; gDeathY = gSoul.y + SOUL_SIZE / 2.0f;
     gDeathT = 0.0f; gDeathShatter = 0;
     gState = ST_GAMEOVER; stopBGM();
-    game_play_sound("PlayerDamaged");   /* HeartSplit 대용 */
+    game_play_sound("HeartSplit");   /* BTS: 하트 금가는 소리 */
 }
 static void hurtSoul(void) {
     if (gSoul.invuln > 0.0f) return;
@@ -817,6 +817,7 @@ static void doAction(int idx) {
             int heal = gInventory[slot].heal;
             gItemsLeft--;
             gSoul.hp += heal; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
+            game_play_sound("PlayerHeal");   /* BTS: 회복 소리 */
             wsprintfW(gMessage, L"* %s을(를) 먹었다.\n* 체력을 %d 회복했다!", gInventory[slot].name, heal);
         } else {
             lstrcpyW(gMessage, L"* 아이템이 다 떨어졌다.");
@@ -916,7 +917,7 @@ static void update(float dt) {
             if (gFightAimDir < 0 && gFightAimX <= BOX_X + 6)         { gFightAimX = (float)(BOX_X + 6); hit = 1; }
             if (hit) {
                 gPhase = PH_FIGHT; gSansDodgeT = 0.0f; gSansOffsetX = 0.0f; gStrikeT = 0.0f;
-                game_play_sound("Slam");   /* PlayerFight 대용 */
+                game_play_sound("PlayerFight");   /* BTS: 공격 휘두르는 소리 */
             }
         } else if (gPhase == PH_FIGHT) {
             /* 샌즈 회피 4단계(BTS): 0~0.4 빠짐(x=220) → 1.1까지 유지 → 1.5 복귀 → HA++ */
@@ -941,7 +942,7 @@ static void update(float dt) {
         if (!gDeathShatter && gDeathT >= 0.7f) {   /* 금간 하트 → 산산조각 */
             int si;
             gDeathShatter = 1;
-            game_play_sound("Slam");   /* HeartShatter 대용 */
+            game_play_sound("HeartShatter");   /* BTS: 하트 산산조각 소리 */
             for (si = 0; si < 6; si++) {
                 float a = (float)((30 + si * 60) * 3.14159265 / 180.0);
                 gShardX[si] = gDeathX; gShardY[si] = gDeathY;
@@ -1290,14 +1291,16 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 static void openAllAudio(void) {
     static const char* sfx[] = {
         "GasterBlaster", "GasterBlast", "Ding", "Flash",
-        "Slam", "Warning", "BoneStab", "PlayerDamaged"
+        "Slam", "Warning", "BoneStab", "PlayerDamaged",
+        "HeartSplit", "HeartShatter", "PlayerFight", "PlayerHeal"
     };
+    int n = (int)(sizeof(sfx) / sizeof(sfx[0]));
     char cmd[400], rel[64], alias[40]; int i;
     if (!gVoiceOpen) {
         wsprintfA(cmd, "open \"%s\" type waveaudio alias spk", assetPath("sans_speak.wav"));
         if (mciSendStringA(cmd, NULL, 0, NULL) == 0) gVoiceOpen = 1;
     }
-    for (i = 0; i < 8; i++) {
+    for (i = 0; i < n; i++) {
         wsprintfA(alias, "sfx_%s", sfx[i]);
         wsprintfA(rel, "sfx_%s.wav", sfx[i]);
         wsprintfA(cmd, "open \"%s\" type waveaudio alias %s", assetPath(rel), alias);

@@ -196,6 +196,7 @@ void haz_on_command(void* ctx, const char* cmd, char a[][VM_ARG_LEN], int argc) 
             else { s->w = (float)gBox.w; s->h = (float)dist; s->x = (float)gBox.x; s->y = (float)(gBox.y - dist); }
             break;
         }
+        game_play_sound("Warning");   /* BTS: 찌르기 생성 시 경고음(텔레그래프) */
         return;
     }
     if (strcmp(cmd, "Platform") == 0) {
@@ -343,7 +344,7 @@ void haz_update(float dt) {
         dir = ((int)(s->ang / 90)) & 3;
         if (s->state == 0) {            /* WARN */
             s->timer -= dt;
-            if (s->timer <= 0) { s->state = 1; s->pen = 0.0f; }
+            if (s->timer <= 0) { s->state = 1; s->pen = 0.0f; game_play_sound("BoneStab"); }  /* BTS: 찌르기 시작음 */
         } else if (s->state == 1) {     /* IN: dist 까지만 진입(오버슈트 방지) */
             float mv = s->speed * dt;
             if (s->pen + mv > s->dist) mv = s->dist - s->pen;
