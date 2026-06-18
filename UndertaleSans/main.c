@@ -204,6 +204,14 @@ static const char* gMultiTable[] = {   /* HA 14..22 */
 };
 #define MULTI_N 9     /* HA 14..22 */
 
+/* BTS 시작 인벤토리(8칸): 버터스카치99/라면90/스테이크60/전설의영웅40×5. 순서대로 소비. */
+#define INVENTORY_N 8
+static const struct { int heal; const wchar_t* name; } gInventory[INVENTORY_N] = {
+    { 99, L"버터스카치 파이" }, { 90, L"인스턴트 라면" }, { 60, L"페이스 스테이크" },
+    { 40, L"전설의 영웅" }, { 40, L"전설의 영웅" }, { 40, L"전설의 영웅" },
+    { 40, L"전설의 영웅" }, { 40, L"전설의 영웅" }
+};
+
 /* ---------------- 전방 선언 ---------------- */
 static void startBattle(void);
 static void startTurn(void);
@@ -224,7 +232,7 @@ static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (fl
 /* 난이도 스케일: NORMAL=BTS 웹 원본과 동일, EASY=채점/접근성, HARD=웹+조기자비 없음 */
 static float diffInvuln(void)  { return gDifficulty == 0 ? 0.4f : 0.034f; }     /* NORMAL/HARD=BTS 1프레임 */
 static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY만 카르마 절반 */
-static int   diffItems(void)   { return gDifficulty == 0 ? 5 : gDifficulty == 1 ? 3 : 2; }
+static int   diffItems(void)   { return INVENTORY_N; }   /* BTS: 모든 난이도 8개(인벤토리 고정) */
 static int   diffMercyHA(void) { return gDifficulty == 0 ? 5 : 99; }  /* BTS=조기 자비승 없음. EASY만 HA5 접근성 */
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
@@ -788,17 +796,24 @@ static void updateEnemyPhase(float dt) {
 /* 메뉴 액션 수행 */
 static void doAction(int idx) {
     switch (idx) {
-    case 0: /* FIGHT → 타겟바 조준(Z로 멈춤) → 슬래시 → 샌즈 회피 */
-        gPhase = PH_FIGHTAIM; gFightAimX = (float)(BOX_X + 12); gFightAimDir = 1;
+    case 0: /* FIGHT → 타겟바(BTS: 랜덤 끝에서 출발, 단방향) → Z 또는 끝 도달 → 슬래시 → 회피 */
+        gPhase = PH_FIGHTAIM;
+        if (rand() & 1) { gFightAimX = (float)(BOX_X + 6); gFightAimDir = 1; }                 /* 좌→우 */
+        else            { gFightAimX = (float)(BOX_X + BOX_W - 6); gFightAimDir = -1; }         /* 우→좌 */
         return;
-    case 1: /* ACT */
-        lstrcpyW(gMessage, L"* 관찰.  샌즈 - 공격 1 방어 1.\n* 끈질기게 버티는 수밖에 없다.");
+    case 1: /* ACT(Check) — BTS: HA>4 이후 2페이지로 전환 */
+        if (gHitAttempts > 4)
+            lstrcpyW(gMessage, L"* 샌즈 - 공격 1 방어 1\n* 영원히 피할 순 없어.  계속 공격해.");
+        else
+            lstrcpyW(gMessage, L"* 샌즈 - 공격 1 방어 1\n* 가장 쉬운 적이다.  1의 데미지밖에 못 준다.");
         break;
-    case 2: /* ITEM */
+    case 2: /* ITEM — BTS 인벤토리(버터스카치99/라면90/스테이크60/전설의영웅40×5) 순서대로 */
         if (gItemsLeft > 0) {
+            int slot = INVENTORY_N - gItemsLeft;
+            int heal = gInventory[slot].heal;
             gItemsLeft--;
-            gSoul.hp += 20; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
-            wsprintfW(gMessage, L"* 몬스터 캔디를 먹었다. (+20 HP)\n* (%d개 남음)", gItemsLeft);
+            gSoul.hp += heal; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
+            wsprintfW(gMessage, L"* %s을(를) 먹었다.\n* 체력을 %d 회복했다!", gInventory[slot].name, heal);
         } else {
             lstrcpyW(gMessage, L"* 아이템이 다 떨어졌다.");
         }
@@ -890,11 +905,12 @@ static void update(float dt) {
         } else if (gPhase == PH_MENU) {
             updateMenuPhase(lPressed, rPressed, zPressed);
         } else if (gPhase == PH_FIGHTAIM) {
-            /* 타겟바 좌우 스윕 → Z로 멈춤 → 슬래시 + 회피 시작 (샌즈가 피하므로 항상 MISS) */
-            gFightAimX += gFightAimDir * 520.0f * dt;
-            if (gFightAimX > BOX_X + BOX_W - 14) { gFightAimX = (float)(BOX_X + BOX_W - 14); gFightAimDir = -1; }
-            if (gFightAimX < BOX_X + 12)         { gFightAimX = (float)(BOX_X + 12); gFightAimDir = 1; }
-            if (zPressed) {
+            /* 타겟바 단방향 360px/s (BTS). Z 또는 반대 끝 도달 시 확정(샌즈가 피하므로 항상 MISS) */
+            int hit = zPressed;
+            gFightAimX += gFightAimDir * 360.0f * dt;
+            if (gFightAimDir > 0 && gFightAimX >= BOX_X + BOX_W - 6) { gFightAimX = (float)(BOX_X + BOX_W - 6); hit = 1; }
+            if (gFightAimDir < 0 && gFightAimX <= BOX_X + 6)         { gFightAimX = (float)(BOX_X + 6); hit = 1; }
+            if (hit) {
                 gPhase = PH_FIGHT; gSansDodgeT = 0.0f; gSansOffsetX = 0.0f; gStrikeT = 0.0f;
                 game_play_sound("Slam");   /* PlayerFight 대용 */
             }
@@ -1016,6 +1032,7 @@ static void drawHpBar(void) {
     int cur = (int)(hpw * (gSoul.hp / (float)gSoul.maxHp));
     wchar_t buf[48];
     drawText(gMemDC, 32, hpy, L"CHARA   LV 19", RGB(255, 255, 255), gFontSmall);
+    drawText(gMemDC, hpx - 30, hpy, L"HP", RGB(255, 255, 0), gFontSmall);   /* BTS: 바 왼쪽의 별도 HP 라벨(노랑) */
     fillRect(gMemDC, hpx, hpy, hpw, hph, gHpBg);
     fillRect(gMemDC, hpx, hpy, cur, hph, gYellow);
     if (gKR > 0) {   /* KARMA(마젠타, BTS KR #FF00FF) — 현재 HP 오른쪽 끝 일부가 깎일 예정 */
@@ -1025,7 +1042,7 @@ static void drawHpBar(void) {
         if (krw > cur) krw = cur;
         fillRect(gMemDC, hpx + cur - krw, hpy, krw, hph, gKarmaBr);
     }
-    wsprintfW(buf, L"HP  %02d / %d", gSoul.hp, gSoul.maxHp);   /* BTS: 0패딩 */
+    wsprintfW(buf, L"%d / %d", gSoul.hp, gSoul.maxHp);   /* BTS: 바 오른쪽엔 숫자만(HP 라벨 분리) */
     drawText(gMemDC, hpx + hpw + 14, hpy, buf, gKR > 0 ? RGB(255, 0, 255) : RGB(255, 255, 255), gFontSmall);
 }
 static void drawSoul(void) {
