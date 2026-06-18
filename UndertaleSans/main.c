@@ -144,6 +144,7 @@ static int    gAtkIndex = 0;    /* 공격 시퀀스 인덱스 */
 static double gMaxFall = 750.0; /* HeartMaxFallSpeed (BLUE 물리는 다음 푸시) */
 static int    gSlamDamage = 0;  /* SansSlamDamage: 벽 충돌 시 1뎀(비치명) — sans_final */
 static int    gSlammed = 0;     /* SansSlam으로 발사된 직후(첫 벽충돌에서 해제) */
+static int    gBgmStarted = 0;  /* 메가로바니아 시작 여부(BTS: 2번째 공격에서 드랍) */
 static int    gBlackScreen = 0;
 static float  gShakeI = 0.0f, gShakeT = 0.0f;
 static int    gShakeDx = 0, gShakeDy = 0;
@@ -399,7 +400,7 @@ static void startBattle(void) {
     gSansX = SANS_CX; lstrcpyA(gSansHead, "Default");
     clearHazards(); centerSoul();
     gState = ST_BATTLE;
-    playBGM();
+    gBgmStarted = 0;     /* BTS: 인트로(sans_intro)는 무음, 2번째 공격에서 메가로바니아 드랍 */
     startEnemyPhase();   /* BTS: 인트로 대사 없이 곧바로 첫 공격(sans_intro)으로 시작 */
 }
 static void startTurn(void) {
@@ -408,6 +409,7 @@ static void startTurn(void) {
 }
 static void startEnemyPhase(void) {
     gPhase = PH_ENEMY;
+    if (gHitAttempts >= 1 && !gBgmStarted) { playBGM(); gBgmStarted = 1; }  /* BTS: 2번째 공격에서 메가로바니아 드랍 */
     clearHazards(); centerSoul();
     gSpawnTimer = 0.0f; gBlasterTimer = 0.6f;
     gEnemyTime = ENEMY_DURATION;
