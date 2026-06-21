@@ -120,7 +120,7 @@ static Bone      gBones[MAX_BONES];        /* [구현조건: 배열] */
 static Blaster   gBlasters[MAX_BLASTERS];  /* [구현조건: 배열] */
 static int       gTurn = 0;
 static int       gMenuIndex = 0;
-static int       gItemsLeft = 3;
+static int       gItemsLeft = 8, gItemsMax = 8;   /* 난이도별 초기 개수(diffItems) — slot=Max-Left */
 static int       gDifficulty = 1;   /* 0=EASY 1=NORMAL 2=HARD */
 static int       gDiffSel = 1;      /* 난이도 선택 커서 */
 static float     gSpawnTimer = 0.0f;
@@ -241,9 +241,9 @@ static int   keyDown(int vk) {                                                  
 static float frand(float a, float b) { return a + (b - a) * ((float)rand() / (float)RAND_MAX); } /* [구현조건: 랜덤함수] */
 
 /* 난이도 스케일: NORMAL=BTS 웹 원본과 동일, EASY=채점/접근성, HARD=웹+조기자비 없음 */
-static float diffInvuln(void)  { return gDifficulty == 0 ? 0.4f : 0.034f; }     /* NORMAL/HARD=BTS 1프레임 */
+static float diffInvuln(void)  { return gDifficulty == 0 ? 0.4f : gDifficulty == 2 ? 0.017f : 0.034f; } /* EASY넉넉/NORMAL=BTS/HARD=절반(1프레임) */
 static int   diffKarma(int k)  { return gDifficulty == 0 ? (k + 1) / 2 : k; }   /* EASY만 카르마 절반 */
-static int   diffItems(void)   { return INVENTORY_N; }   /* BTS: 모든 난이도 8개(인벤토리 고정) */
+static int   diffItems(void)   { return gDifficulty == 2 ? 3 : INVENTORY_N; }   /* HARD=3개(강한 아이템만), 그 외 8개 */
 static int   diffMercyHA(void) { return gDifficulty == 0 ? 5 : 99; }  /* BTS=조기 자비승 없음. EASY만 HA5 접근성 */
 
 static int rectsOverlap(float ax, float ay, float aw, float ah,
@@ -371,7 +371,7 @@ static void startDialogue(const wchar_t** lines, int n, int after) {
     if (n > 10) n = 10;
     for (i = 0; i < n; i++) gDlgQueue[i] = lines[i];
     gDlgN = n; gDlgIdx = 0; gDlgAfter = after;
-    gPhase = PH_DIALOGUE; gTypePos = 0.0f;
+    gPhase = PH_DIALOGUE; gTypePos = 0.0f; gVoiceTimer = 0.0f;   /* 음성 블립 첫 프레임부터 깔끔하게 */
 }
 /* BTS HitAttempts 페이즈: 0-12=인트로, 13=스페어, 14-22=멀티(bonestab3까지), 23+=특수공격 */
 static const char* chooseAttack(void) {
@@ -388,7 +388,7 @@ static const wchar_t* menuInfoText(void) {
     if (ha == 21) return L"* 샌즈가 뭔가 준비하고 있다.";
     if (ha == 20) return L"* 샌즈가 정말 지쳐 보이기 시작한다.";
     if (ha == 19) return L"* 이걸 읽는 게 시간을 잘 쓰는 것 같진 않다.";
-    if (ha >= 15) return L"* 진짜 전투가 마침내 시작된다.";
+    if (ha == 15) return L"* 진짜 전투가 마침내 시작된다.";   /* BTS: HA15만(16~18은 기본 문구) */
     if (ha == 13) return L"* 샌즈가 잠시 쉬고 있다.";
     if (ha <= 1)  return L"* 안 좋은 일이 생길 것 같은 기분이 든다.";
     return L"* 등 뒤로 죄가 기어오르는 게 느껴진다.";   /* BTS 기본 플레이버(제노사이드) */
@@ -413,7 +413,7 @@ static void startEnding(int viaFinal) {
 static void startBattle(void) {
     gSoul.maxHp = MAX_HP; gSoul.hp = MAX_HP; gSoul.invuln = 0.0f;
     gKR = 0; gKR_t = 0.0f; gAtkIndex = 0; gHitAttempts = 0;
-    gTurn = 0; gMenuIndex = 0; gItemsLeft = diffItems();
+    gTurn = 0; gMenuIndex = 0; gItemsLeft = diffItems(); gItemsMax = gItemsLeft;
     gCurAtk[0] = 0; gSansOffsetX = 0.0f; gBubbleLen = 0; gBlackScreen = 0;
     gSansX = SANS_CX; lstrcpyA(gSansHead, "Default");
     clearHazards(); centerSoul();
@@ -556,8 +556,10 @@ void game_sans_slam(int dir) {
     gVx = (float)(cos(a) * spd);
     gVy = (float)(sin(a) * spd);
     gPrevUp = 1;   /* 슬램 직후 점프 엣지 무시 */
-    gSlammed = 1;  /* BTS: Slammed=1 → 첫 벽충돌에서 효과음/흔들림(+SlamDamage 시 1뎀) */
-    game_shake(5.0);
+    if (spd > 0.5 || spd < -0.5) {   /* 실제 발사속도 있을 때만 슬램 래치(MaxFall=0이면 안 걸림) */
+        gSlammed = 1;  /* BTS: Slammed=1 → 첫 벽충돌에서 효과음/흔들림(+SlamDamage 시 1뎀) */
+        game_shake(5.0);
+    }
 }
 void game_slam_damage(int on) { gSlamDamage = (on != 0); }   /* BTS SansSlamDamage */
 /* 슬램된 영혼이 벽에 충돌한 순간(첫 1회). speed=충돌 직전 중력방향 속도. */
@@ -825,7 +827,7 @@ static void doAction(int idx) {
         break;
     case 2: /* ITEM — BTS 인벤토리(버터스카치99/라면90/스테이크60/전설의영웅40×5) 순서대로 */
         if (gItemsLeft > 0) {
-            int slot = INVENTORY_N - gItemsLeft;
+            int slot = gItemsMax - gItemsLeft;   /* 사용 순서(강→약). HARD 3개면 0,1,2(강한 것) 사용 */
             int heal = gInventory[slot].heal;
             gItemsLeft--;
             gSoul.hp += heal; if (gSoul.hp > gSoul.maxHp) gSoul.hp = gSoul.maxHp;
@@ -1093,9 +1095,9 @@ static void render(void) {
     if (gState == ST_DIFFICULTY) {
         static const wchar_t* names[3] = { L"EASY", L"NORMAL", L"HARD" };
         static const wchar_t* desc[3]  = {
-            L"쉬움 — 채점·연습용. 넉넉한 무적시간·아이템 5개·빠른 자비",
-            L"보통 — BTS 웹 원본과 동일 (4px 히트박스·1프레임 무적)",
-            L"어려움 — 웹 원본 + 조기 자비 없음·아이템 2개"
+            L"쉬움 — 채점·연습용. 넉넉한 무적시간·카르마 절반·아이템 8개·5턴 자비",
+            L"보통 — BTS 웹 원본과 동일 (4px 히트박스·무적 0.034s·아이템 8개)",
+            L"어려움 — 무적시간 절반(0.017s)·아이템 3개·조기 자비 없음"
         };
         int i;
         drawTextCentered(CLIENT_W / 2, 96, L"난이도 선택", RGB(255, 255, 255), gFontBig);
@@ -1184,7 +1186,7 @@ static void render(void) {
         }
         if (gSansDodgeT > 0.3f) {   /* 명중=노랑, 빗나감=회색 (샌즈 위 고정 위치) */
             if (gFightHit) drawTextCentered(SANS_CX, 76, L"명중!", RGB(255, 220, 0), gFontBig);
-            else           drawTextCentered(300, 80, L"빗나감!", RGB(191, 191, 191), gFontSmall);
+            else           drawTextCentered(SANS_CX, 76, L"빗나감!", RGB(191, 191, 191), gFontSmall);   /* 명중과 같은 위치 */
         }
     } else if (gPhase == PH_ENEMY) {
         if (gUseVM) {
