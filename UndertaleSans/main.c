@@ -78,7 +78,7 @@
 static const int gMenuBtnX[4] = { 32, 184, 344, 496 };
 
 /* ---------------- 구조체 ([구현조건: 구조체]) ---------------- */
-typedef enum { ST_TITLE, ST_DIFFICULTY, ST_BATTLE, ST_GAMEOVER, ST_WIN } GameState;
+typedef enum { ST_TITLE, ST_DIFFICULTY, ST_BATTLE, ST_GAMEOVER } GameState;   /* 승리는 대사 후 ST_TITLE 직행(BTS) */
 typedef enum { PH_DIALOGUE, PH_ENEMY, PH_MENU, PH_ACTION, PH_FIGHTAIM, PH_FIGHT } Phase;
 
 typedef struct { float x, y; int maxHp, hp; float invuln; } Soul;
@@ -980,9 +980,6 @@ static void update(float dt) {
         }
         if (gDeathT >= 4.0f || (gDeathT >= 2.0f && zPressed)) gState = ST_TITLE;   /* 자동 복귀(BTS) + Z 스킵 */
         break;
-    case ST_WIN:
-        if (zPressed) { gState = ST_TITLE; }
-        break;
     }
 }
 
@@ -1136,14 +1133,6 @@ static void render(void) {
         }
         return;
     }
-    if (gState == ST_WIN) {
-        drawSans();   /* 샌즈 y68~224 — 텍스트는 그 아래로 */
-        drawTextCentered(CLIENT_W / 2, 250, L"* 흠. 난 그릴비네 가게나 가야겠다.", RGB(255, 255, 255), gFontSmall);
-        drawTextCentered(CLIENT_W / 2, 290, L"승리!  (자비)", RGB(255, 255, 0), gFontBig);
-        drawTextCentered(CLIENT_W / 2, 360, L"Z를 눌러 타이틀로 돌아가기", RGB(255, 255, 0), gFontSmall);
-        return;
-    }
-
     /* ---- 전투 ---- */
     drawSans();
 
