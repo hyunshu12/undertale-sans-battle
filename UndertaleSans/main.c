@@ -106,6 +106,8 @@ static int      gDstX = 0, gDstY = 0, gDstW = CLIENT_W, gDstH = CLIENT_H; /* 레
 static Sprite   gSprLegs, gSprTorso;                                    /* 샌즈 다리/몸통 */
 static Sprite   gSprBodyDown, gSprBodyUp, gSprBodyLeft, gSprBodyRight, gSprSweat; /* 팔포즈/땀 */
 static Sprite   gSprHeadDef, gSprHeadBlue, gSprHeadBlue1, gSprHeadNoEye, gSprHeadClosed, gSprHeadTired, gSprHeadTired2, gSprHeadWink, gSprHeadLook; /* 머리 표정 */
+/* SPECIAL 모드 전용 머리(assets\special\): 친구 얼굴. 없으면 일반 샌즈로 폴백 */
+static Sprite   gSpcHeadDef, gSpcHeadBlue, gSpcHeadBlue1, gSpcHeadNoEye, gSpcHeadClosed, gSpcHeadTired, gSpcHeadTired2, gSpcHeadWink, gSpcHeadLook;
 static Sprite   gSprStrike[6];           /* FIGHT 슬래시(6프레임) */
 static Sprite   gSprHeart, gSprHeartBlue, gSprBlaster, gSprBlasterFire; /* gSprBlaster/Fire=Slice2 폴백 */
 static Sprite   gSprFight, gSprAct, gSprItem, gSprMercy;
@@ -122,7 +124,8 @@ static int       gTurn = 0;
 static int       gMenuIndex = 0;
 static int       gItemsLeft = 8, gItemsMax = 8;   /* 난이도별 초기 개수(diffItems) — slot=Max-Left */
 static int       gDifficulty = 1;   /* 0=EASY 1=NORMAL 2=HARD */
-static int       gDiffSel = 1;      /* 난이도 선택 커서 */
+static int       gDiffSel = 1;      /* 난이도 선택 커서(0~3, 3=SPECIAL) */
+static int       gSpecial = 0;      /* SPECIAL 모드: HARD와 동일 규칙 + 샌즈 얼굴이 친구 얼굴 */
 static float     gSpawnTimer = 0.0f;
 static float     gBlasterTimer = 0.0f;
 static float     gEnemyTime = 0.0f;
@@ -886,8 +889,12 @@ static void update(float dt) {
         break;
     case ST_DIFFICULTY:
         if (lPressed && gDiffSel > 0) gDiffSel--;
-        if (rPressed && gDiffSel < 2) gDiffSel++;
-        if (zPressed) { gDifficulty = gDiffSel; startBattle(); }   /* 확정 → 전투 (ESC는 전역 종료) */
+        if (rPressed && gDiffSel < 3) gDiffSel++;   /* 0~3 (3=SPECIAL) */
+        if (zPressed) {                              /* 확정 → 전투 (ESC는 전역 종료) */
+            gSpecial = (gDiffSel == 3);              /* SPECIAL=HARD 규칙 + 친구 얼굴 */
+            gDifficulty = gSpecial ? 2 : gDiffSel;   /* SPECIAL은 난이도상 HARD(2)로 처리 */
+            startBattle();
+        }
         break;
     case ST_BATTLE:
         if (gBubbleLen > 0) {           /* 샌즈 말풍선 타이핑/표시 */
@@ -985,16 +992,24 @@ static void update(float dt) {
 
 /* ---------------- 렌더 ---------------- */
 /* 현재 표정 문자열 → 머리 스프라이트 */
+/* SPECIAL 모드면 친구(spc) 스프라이트를, 로드 실패 시 일반 샌즈로 폴백 */
+static Sprite* headPick(Sprite* normal, Sprite* spc) {
+    return (gSpecial && spc->ok) ? spc : normal;
+}
 static Sprite* sansHeadSprite(void) {
-    if (strcmp(gSansHead, "BlueEye") == 0)    /* 파란눈 깜빡임(2프레임 교대) */
-        return (((int)(gMenacePulse * 10.0f) & 1) && gSprHeadBlue1.ok) ? &gSprHeadBlue1 : &gSprHeadBlue;
-    if (strcmp(gSansHead, "NoEyes") == 0)     return &gSprHeadNoEye;
-    if (strcmp(gSansHead, "ClosedEyes") == 0) return &gSprHeadClosed;
-    if (strcmp(gSansHead, "Tired2") == 0)     return &gSprHeadTired2;
-    if (strncmp(gSansHead, "Tired", 5) == 0)  return &gSprHeadTired;
-    if (strcmp(gSansHead, "Wink") == 0)       return &gSprHeadWink;
-    if (strcmp(gSansHead, "LookLeft") == 0)   return &gSprHeadLook;
-    return &gSprHeadDef;   /* Default 등 */
+    if (strcmp(gSansHead, "BlueEye") == 0) {  /* 파란눈 깜빡임(2프레임 교대) */
+        int alt = ((int)(gMenacePulse * 10.0f) & 1);
+        Sprite* n = (alt && gSprHeadBlue1.ok) ? &gSprHeadBlue1 : &gSprHeadBlue;
+        Sprite* s = (alt && gSpcHeadBlue1.ok) ? &gSpcHeadBlue1 : &gSpcHeadBlue;
+        return headPick(n, s);
+    }
+    if (strcmp(gSansHead, "NoEyes") == 0)     return headPick(&gSprHeadNoEye,  &gSpcHeadNoEye);
+    if (strcmp(gSansHead, "ClosedEyes") == 0) return headPick(&gSprHeadClosed, &gSpcHeadClosed);
+    if (strcmp(gSansHead, "Tired2") == 0)     return headPick(&gSprHeadTired2, &gSpcHeadTired2);
+    if (strncmp(gSansHead, "Tired", 5) == 0)  return headPick(&gSprHeadTired,  &gSpcHeadTired);
+    if (strcmp(gSansHead, "Wink") == 0)       return headPick(&gSprHeadWink,   &gSpcHeadWink);
+    if (strcmp(gSansHead, "LookLeft") == 0)   return headPick(&gSprHeadLook,   &gSpcHeadLook);
+    return headPick(&gSprHeadDef, &gSpcHeadDef);   /* Default 등 */
 }
 /* 샌즈 전신 합성. BTS: 다리(발끝224)+몸통(top128)+머리(top80, 몸통과 12px 겹침).
    호흡(Idle/HeadBob/Tired)·팔 포즈(SansBody) 반영. */
@@ -1016,7 +1031,7 @@ static void drawSans(void) {
             int bx = (gSansBodyPose <= 2) ? cx - 60 : cx - 66;
             int by = (gSansBodyPose <= 2) ? SANS_FEET - 140 : SANS_FEET - 96;
             drawSpriteMag(body, bx, by);
-            drawSpriteMag(head, cx - SANS_HEAD_W / 2, 140 - SANS_HEAD_H);   /* 머리 바닥 y140 */
+            drawSpriteMag(head, cx - head->w / 2, 140 - head->h);   /* 실제 크기 기준 중앙·바닥(y140) 정렬: 샌즈(64x60)는 동일, SPECIAL 친구머리(임의 크기) 대응 */
             if (gSansSweat > 0) drawSpriteMag(&gSprSweat, cx - 32, 72);
             return;
         }
@@ -1024,7 +1039,7 @@ static void drawSans(void) {
     if (gSprLegs.ok && gSprTorso.ok && head->ok) {
         drawSpriteMag(&gSprLegs,  cx - 42, SANS_FEET - SANS_LEGS_H);                  /* (cx-42,178) */
         drawSpriteMag(&gSprTorso, cx - SANS_TORSO_W / 2 + tox, 178 - SANS_TORSO_H + toy); /* (cx-54,128) */
-        drawSpriteMag(head,       cx - SANS_HEAD_W / 2 + hox, 140 - SANS_HEAD_H + hoy);   /* (cx-32, 80) */
+        drawSpriteMag(head,       cx - head->w / 2 + hox, 140 - head->h + hoy);   /* 실제 크기 기준 중앙·바닥(y140) 정렬: 샌즈(64x60)는 (cx-32,80)로 동일, SPECIAL 친구머리 대응 */
         if (gSansSweat > 0) drawSpriteMag(&gSprSweat, cx - 32 + hox, 72 + hoy);
         return;
     }
@@ -1093,18 +1108,20 @@ static void render(void) {
         return;
     }
     if (gState == ST_DIFFICULTY) {
-        static const wchar_t* names[3] = { L"EASY", L"NORMAL", L"HARD" };
-        static const wchar_t* desc[3]  = {
+        static const wchar_t* names[4] = { L"EASY", L"NORMAL", L"HARD", L"SPECIAL" };
+        static const wchar_t* desc[4]  = {
             L"쉬움 — 채점·연습용. 넉넉한 무적시간·카르마 절반·아이템 8개·5턴 자비",
             L"보통 — BTS 웹 원본과 동일 (4px 히트박스·무적 0.034s·아이템 8개)",
-            L"어려움 — 무적시간 절반(0.017s)·아이템 3개·조기 자비 없음"
+            L"어려움 — 무적시간 절반(0.017s)·아이템 3개·조기 자비 없음",
+            L"스페셜 — HARD와 동일하지만 샌즈의 얼굴이...?"
         };
         int i;
         drawTextCentered(CLIENT_W / 2, 96, L"난이도 선택", RGB(255, 255, 255), gFontBig);
-        for (i = 0; i < 3; i++) {
-            int bx = 120 + i * 140, by = 210, bw = 120, bh = 54;
+        for (i = 0; i < 4; i++) {
+            int bx = 85 + i * 120, by = 210, bw = 110, bh = 54;   /* 4개: 85,205,325,445 */
             int sel = (gDiffSel == i);
-            COLORREF col = sel ? RGB(255, 255, 0) : RGB(120, 120, 120);
+            /* SPECIAL(3)은 미선택 시에도 살짝 붉게 강조 */
+            COLORREF col = sel ? RGB(255, 255, 0) : (i == 3 ? RGB(200, 90, 90) : RGB(120, 120, 120));
             fillRect(gMemDC, bx, by, bw, bh, gDkRed);
             if (sel) {   /* 선택 테두리 */
                 HBRUSH ob = (HBRUSH)SelectObject(gMemDC, GetStockObject(NULL_BRUSH));
@@ -1371,6 +1388,17 @@ static void initResources(void) {
     gSprHeadTired2  = loadSprite("sans_head_tired2.bmp");
     gSprHeadWink    = loadSprite("sans_head_wink.bmp");
     gSprHeadLook    = loadSprite("sans_head_lookleft.bmp");
+    /* SPECIAL 모드 전용 머리(친구 얼굴). 파일 없으면 .ok=0 → 일반 샌즈로 폴백.
+       기본 표정은 special\sans_head.bmp 로 넣으면 적용됨(직접 추가 예정). */
+    gSpcHeadDef     = loadSprite("special\\sans_head.bmp");
+    gSpcHeadBlue    = loadSprite("special\\sans_head_blue.bmp");
+    gSpcHeadBlue1   = loadSprite("special\\sans_head_blue1.bmp");
+    gSpcHeadNoEye   = loadSprite("special\\sans_head_noeyes.bmp");
+    gSpcHeadClosed  = loadSprite("special\\sans_head_closed.bmp");
+    gSpcHeadTired   = loadSprite("special\\sans_head_tired.bmp");
+    gSpcHeadTired2  = loadSprite("special\\sans_head_tired2.bmp");
+    gSpcHeadWink    = loadSprite("special\\sans_head_wink.bmp");
+    gSpcHeadLook    = loadSprite("special\\sans_head_lookleft.bmp");
     gSprBodyDown    = loadSprite("sans_body_down.bmp");
     gSprBodyUp      = loadSprite("sans_body_up.bmp");
     gSprBodyLeft    = loadSprite("sans_body_left.bmp");
@@ -1411,6 +1439,9 @@ static void freeResources(void) {
     freeSprite(&gSprHeadDef); freeSprite(&gSprHeadBlue); freeSprite(&gSprHeadBlue1); freeSprite(&gSprHeadNoEye);
     freeSprite(&gSprHeadClosed); freeSprite(&gSprHeadTired); freeSprite(&gSprHeadTired2);
     freeSprite(&gSprHeadWink); freeSprite(&gSprHeadLook);
+    freeSprite(&gSpcHeadDef); freeSprite(&gSpcHeadBlue); freeSprite(&gSpcHeadBlue1); freeSprite(&gSpcHeadNoEye);
+    freeSprite(&gSpcHeadClosed); freeSprite(&gSpcHeadTired); freeSprite(&gSpcHeadTired2);
+    freeSprite(&gSpcHeadWink); freeSprite(&gSpcHeadLook);
     for (i = 0; i < 6; i++) freeSprite(&gSprStrike[i]);
     freeSprite(&gSprHeart); freeSprite(&gSprHeartBlue); freeSprite(&gSprBlaster); freeSprite(&gSprBlasterFire);
     freeSprite(&gSprFight); freeSprite(&gSprAct); freeSprite(&gSprItem); freeSprite(&gSprMercy);
